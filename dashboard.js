@@ -73,6 +73,12 @@
     return n;
   };
   const c = (name) => PREFIX + '-' + name; // class helper
+  // 로컬(브라우저 시간대) 오늘 날짜를 YYYY-MM-DD 로. toISOString 은 UTC 라 KST 새벽에 어제가 잡혀 사용하지 않음.
+  const todayLocal = () => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  };
   const esc = (s) => String(s).replace(/[&<>"]/g, (ch) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
@@ -266,7 +272,7 @@
   function renderConfig() {
     state.view = 'config';
     setChip('조회 전');
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayLocal();
     bodyEl.innerHTML = '';
 
     bodyEl.append(headline('조회 조건'));
