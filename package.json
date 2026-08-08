@@ -1,0 +1,24 @@
+{
+  "name": "picking_performance",
+  "version": "1.0.0",
+  "description": "inbound.coupang.com 반품 토트 데이터를 작업자별 성과 차트로 보여주는 북마크릿 대시보드",
+  "main": "dashboard.js",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ggur9312/picking_performance.git"
+  },
+  "keywords": ["bookmarklet", "dashboard", "chart.js", "coupang", "picking"],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ggur9312/picking_performance/issues"
+  },
+  "homepage": "https://github.com/ggur9312/picking_performance#readme",
+  "devDependencies": {
+    "chart.js": "^4.4.1",
+    "playwright-core": "^1.62.1"
+  }
+}
