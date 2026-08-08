@@ -12,6 +12,7 @@ const path = require('path');
 
 const ROOT = __dirname;
 const SRC = path.join(ROOT, 'dashboard.js');
+const CHART = path.join(ROOT, 'dist', 'chart.min.js'); // 내장할 최소 Chart.js 번들
 const OUT = path.join(ROOT, 'dist', 'bookmarklet.txt');
 const INDEX = path.join(ROOT, 'index.html');
 
@@ -78,12 +79,25 @@ function main() {
   const raw = fs.readFileSync(SRC, 'utf8');
   const min = minify(raw);
 
-  // 북마크릿 본문: 소스가 이미 IIFE 이므로 그대로 감싼다.
-  const body = 'javascript:' + encodeURIComponent(min);
+  // Chart.js 최소 번들을 앞에 인라인한다(이미 압축되어 있으므로 원문 그대로 사용).
+  // 이렇게 하면 외부 CDN 로드가 전혀 없어 쿠팡 CSP 와 무관하게 차트가 그려진다.
+  let chart = '';
+  if (fs.existsSync(CHART)) {
+    chart = fs.readFileSync(CHART, 'utf8').trim();
+    if (chart && !chart.endsWith(';')) chart += ';';
+  } else {
+    console.warn('경고: dist/chart.min.js 가 없습니다. Chart.js 가 내장되지 않습니다. ' +
+      '먼저 `npx esbuild vendor/chart-entry.mjs --bundle --minify --format=iife --outfile=dist/chart.min.js` 실행.');
+  }
+
+  // 북마크릿 본문: [Chart.js 번들] + [대시보드 IIFE]. 소스가 이미 IIFE 이므로 그대로 감싼다.
+  const script = chart + '\n' + min;
+  const body = 'javascript:' + encodeURIComponent(script);
 
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, body);
-  console.log('dist/bookmarklet.txt  ' + (body.length / 1024).toFixed(1) + ' KB');
+  console.log('dist/chart.min.js     ' + (chart.length / 1024).toFixed(1) + ' KB (내장)');
+  console.log('dist/bookmarklet.txt  ' + (body.length / 1024).toFixed(1) + ' KB (인코딩 후)');
 
   // index.html href 갱신
   let html = fs.readFileSync(INDEX, 'utf8');

@@ -3,6 +3,9 @@
 `inbound.coupang.com` 반품 토트(vendor-return/tote) 데이터를 수집해 **집품 작업자별 성과**를
 macOS 스타일 모달 + [Chart.js](https://www.chartjs.org/) 로 시각화하는 **북마크릿**입니다.
 
+> **Chart.js 내장** — 막대 차트에 필요한 부분만 트리셰이킹한 Chart.js 를 북마크릿에 함께 담아
+> 외부 CDN 을 전혀 사용하지 않습니다. 따라서 쿠팡 사이트의 CSP 와 무관하게 차트가 그려집니다.
+
 ![preview](dist/preview-results.png)
 
 ---
@@ -64,18 +67,21 @@ macOS 스타일 모달 + [Chart.js](https://www.chartjs.org/) 로 시각화하�
 
 ## 개발 / 빌드
 
-이 저장소는 빌드 도구 없이 Node 표준 모듈만 사용합니다.
-
 ```bash
-# dashboard.js 를 자체포함 북마크릿으로 변환 → dist/bookmarklet.txt 생성 + index.html 링크 갱신
+# (최초 1회 또는 Chart.js 버전 변경 시) 막대 차트용 최소 Chart.js 번들 생성
+npx esbuild vendor/chart-entry.mjs --bundle --minify --format=iife --outfile=dist/chart.min.js
+
+# dashboard.js + Chart.js 번들 → 자체포함 북마크릿(dist/bookmarklet.txt) + index.html 링크 갱신
 node build.js       # 또는  npm run build
 ```
 
 - `dashboard.js` — 앱 전체 로직(가독성 있는 원본). **여기만 수정**하고 `node build.js` 로 재생성합니다.
-- `build.js` — 주석/여백을 안전하게 최소화하고 `javascript:` URI 로 인코딩.
+- `vendor/chart-entry.mjs` — 필요한 Chart.js 컴포넌트(막대/축/툴팁/범례)만 등록해 전역 노출하는 번들 엔트리.
+- `dist/chart.min.js` — esbuild 로 트리셰이킹·압축한 최소 Chart.js 번들(북마크릿에 내장됨, 커밋됨).
+- `build.js` — `dist/chart.min.js` + 최소화한 `dashboard.js` 를 이어붙여 `javascript:` URI 로 인코딩.
 - `index.html` — 설치 페이지 + **모의 데이터 미리보기**(쿠팡 접속 없이 UI/차트 확인).
 - `mock/` — 오프라인 검증용 샘플 목록/상세 HTML.
-- `dist/bookmarklet.txt` — 생성된 자체포함 북마크릿.
+- `dist/bookmarklet.txt` — 생성된 자체포함 북마크릿(약 250KB, Chart.js 포함).
 
 ### 로컬 검증
 
@@ -84,9 +90,9 @@ node build.js       # 또는  npm run build
 
 ## 참고 / 한계
 
-- **자체포함 북마크릿**이라 외부 의존성은 Chart.js CDN 하나뿐입니다. 쿠팡 사이트의 CSP 가 CDN 을
-  차단하면 차트가 뜨지 않을 수 있습니다. 이 경우 `dist/bookmarklet.txt` 내용을
-  **개발자도구 콘솔에 붙여넣어** 실행하세요(콘솔 실행은 대개 CSP 제약이 덜합니다).
+- **완전 자체포함**입니다. Chart.js 까지 북마크릿에 내장되어 외부 네트워크 요청이 전혀 없으므로
+  쿠팡 사이트의 CSP 와 무관하게 동작합니다(용량은 약 250KB). 그래도 무언가 막히면
+  `dist/bookmarklet.txt` 내용을 **개발자도구 콘솔에 붙여넣어** 실행해 볼 수 있습니다.
 - 상세 페이지 셀 인덱스(`td[0]/[6]/[7]`)는 명세 기준이며, 실제 마크업이 다르면
   `dashboard.js` 상단의 `IDX_TOTE / IDX_PICKER / IDX_QTY` 상수만 바꾸면 됩니다.
 - 각 상세 = 토트 1건으로 간주합니다(토트 수 = 고유 토트바코드 수).
