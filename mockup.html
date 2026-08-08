@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>집품 성과 대시보드 · 컨셉 시안</title>
+<style>
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    -webkit-font-smoothing:antialiased;display:flex;align-items:center;justify-content:center;padding:26px;
+    color:var(--text);background:var(--page);
+  }
+
+  /* ===== 컨셉 A: 미니멀 라이트 (Linear/Vercel) ===== */
+  [data-c="a"]{
+    --page:#f3f3f5; --win:#ffffff; --winbrd:#e7e7ea; --text:#18181b; --muted:#71717a;
+    --card:#fafafb; --cardbrd:#ececef; --accent:#4f46e5; --accent2:#6366f1;
+    --tileval:#18181b; --grid:rgba(0,0,0,.06); --pill:#f4f4f5; --pillbrd:#e4e4e7;
+    --barA:'#4f46e5'; --barB:'#a5b4cf'; --rowfill:transparent; --radius:14px; --shadow:0 1px 2px rgba(0,0,0,.05);
+  }
+  /* ===== 컨셉 B: 다크 프로 ===== */
+  [data-c="b"]{
+    --page:radial-gradient(1200px 700px at 80% -10%, #17233b 0%, #0e1117 60%); --win:#161b22; --winbrd:#232a34;
+    --text:#e6edf3; --muted:#8b949e; --card:#1b222c; --cardbrd:#293240; --accent:#58a6ff; --accent2:#7ee787;
+    --tileval:#e6edf3; --grid:rgba(255,255,255,.07); --pill:#20272f; --pillbrd:#30363d;
+    --barA:'#58a6ff'; --barB:'#56d4dd'; --rowfill:rgba(88,166,255,.10); --radius:14px; --shadow:0 4px 16px rgba(0,0,0,.4);
+  }
+  /* ===== 컨셉 C: 핀테크 볼드 ===== */
+  [data-c="c"]{
+    --page:#eef0f4; --win:#ffffff; --winbrd:#e6e8ee; --text:#0f1222; --muted:#6b7280;
+    --card:#ffffff; --cardbrd:#eef0f4; --accent:#7c3aed; --accent2:#f59e0b;
+    --tileval:#0f1222; --grid:rgba(0,0,0,.06); --pill:#f5f3ff; --pillbrd:#e9e3ff;
+    --barA:'#7c3aed'; --barB:'#f59e0b'; --rowfill:rgba(124,58,237,.08); --radius:18px; --shadow:0 12px 30px rgba(20,20,60,.10);
+  }
+
+  .win{width:min(1060px,96vw);max-height:94vh;display:flex;flex-direction:column;
+    background:var(--win);border:1px solid var(--winbrd);border-radius:calc(var(--radius) + 6px);overflow:hidden;
+    box-shadow:0 24px 60px rgba(20,20,50,.22);}
+  [data-c="b"] .win{box-shadow:0 24px 70px rgba(0,0,0,.55);}
+
+  .titlebar{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--cardbrd);}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .logo{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));}
+  [data-c="c"] .logo{border-radius:10px;}
+  .title{font-size:16px;font-weight:800;letter-spacing:-.3px;}
+  .subtitle{font-size:12px;color:var(--muted);margin-top:1px;}
+  .chip{margin-left:auto;font-size:12px;font-weight:600;color:var(--muted);background:var(--pill);
+    border:1px solid var(--pillbrd);padding:6px 11px;border-radius:999px;}
+  .xbtn{width:31px;height:31px;border-radius:9px;border:1px solid var(--pillbrd);background:var(--pill);
+    color:var(--text);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}
+  [data-c="a"] .xbtn{border-radius:8px;}
+
+  .body{padding:20px 22px 22px;overflow:auto;}
+
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;}
+  .tile{background:var(--card);border:1px solid var(--cardbrd);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow);}
+  .tile .v{font-size:26px;font-weight:800;letter-spacing:-.6px;color:var(--tileval);}
+  [data-c="c"] .tile .v{font-size:30px;}
+  .tile .l{font-size:12px;color:var(--muted);margin-top:3px;font-weight:600;}
+
+  .card{background:var(--card);border:1px solid var(--cardbrd);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);}
+  .h{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:14.5px;font-weight:700;letter-spacing:-.2px;color:var(--text);}
+  .h .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto;}
+  .can{position:relative;width:100%;height:290px;}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px;}
+
+  /* ===== 수치 순위 리스트 (leaderboard) ===== */
+  .lb{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;}
+  .lb li{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:12px;
+    background:linear-gradient(90deg,var(--rowfill) var(--p,0%),transparent 0);border:1px solid transparent;}
+  .lb .rk{width:26px;height:26px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:800;border-radius:8px;background:var(--pill);color:var(--muted);}
+  .lb .nm{font-size:14px;font-weight:700;color:var(--text);}
+  .lb .vl{margin-left:auto;font-size:16px;font-weight:800;color:var(--text);letter-spacing:-.3px;}
+  .lb .vl small{font-size:11px;font-weight:600;color:var(--muted);margin-left:3px;}
+  .lb .sub{font-size:11px;color:var(--muted);font-weight:600;margin-top:2px;}
+
+  /* 1·2·3등 효과 */
+  .lb li.t1{background:linear-gradient(90deg, rgba(247,181,0,.16), rgba(247,181,0,.04));border-color:rgba(247,181,0,.45);}
+  .lb li.t2{background:linear-gradient(90deg, rgba(148,163,184,.16), rgba(148,163,184,.03));border-color:rgba(148,163,184,.4);}
+  .lb li.t3{background:linear-gradient(90deg, rgba(205,127,50,.15), rgba(205,127,50,.03));border-color:rgba(205,127,50,.4);}
+  .lb li.t1 .rk,.lb li.t2 .rk,.lb li.t3 .rk{color:#fff;font-size:15px;}
+  .lb li.t1 .rk{background:linear-gradient(135deg,#fcd34d,#f59e0b);box-shadow:0 3px 10px rgba(245,158,11,.5);}
+  .lb li.t2 .rk{background:linear-gradient(135deg,#e5e7eb,#9ca3af);box-shadow:0 3px 10px rgba(148,163,184,.45);}
+  .lb li.t3 .rk{background:linear-gradient(135deg,#e0a878,#b45309);box-shadow:0 3px 10px rgba(180,83,9,.4);}
+  .lb li.t1 .vl{color:var(--accent);}
+
+  .footer{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}
+  .btn{font:inherit;font-size:13px;font-weight:700;padding:10px 18px;border-radius:11px;cursor:pointer;
+    border:1px solid var(--pillbrd);background:var(--pill);color:var(--text);}
+  .btn.primary{border:none;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2));}
+  .concept-name{position:fixed;top:10px;left:14px;font-size:12px;font-weight:700;color:var(--muted);
+    background:var(--pill);border:1px solid var(--pillbrd);padding:5px 10px;border-radius:8px;}
+</style>
+</head>
+<body>
+  <div class="concept-name" id="cname"></div>
+  <div class="win">
+    <div class="titlebar">
+      <div class="brand">
+        <div class="logo">◆</div>
+        <div>
+          <div class="title">집품 성과 대시보드</div>
+          <div class="subtitle">작업자별 집품 성과 · 반품 토트</div>
+        </div>
+      </div>
+      <div class="chip">2026-08-04 · 종일</div>
+      <button class="xbtn">✕</button>
+    </div>
+    <div class="body">
+      <div class="tiles">
+        <div class="tile"><div class="v">157</div><div class="l">총 집품 수량</div></div>
+        <div class="tile"><div class="v">8</div><div class="l">총 토트 수</div></div>
+        <div class="tile"><div class="v">4</div><div class="l">작업자 수</div></div>
+        <div class="tile"><div class="v">19.6</div><div class="l">토트당 평균 수량</div></div>
+      </div>
+
+      <div class="card">
+        <h3 class="h"><span class="dot"></span>종합 대시보드 — 작업자별 수량 · 토트 수</h3>
+        <div class="can"><canvas id="main"></canvas></div>
+      </div>
+
+      <div class="cards">
+        <div class="card"><h3 class="h"><span class="dot"></span>집품 수량 순위</h3><ol class="lb" id="lb-qty"></ol></div>
+        <div class="card"><h3 class="h"><span class="dot"></span>토트 수 순위</h3><ol class="lb" id="lb-tote"></ol></div>
+        <div class="card"><h3 class="h"><span class="dot"></span>종합 순위</h3><ol class="lb" id="lb-score"></ol></div>
+      </div>
+
+      <div class="footer">
+        <button class="btn">← 조회 조건</button>
+        <button class="btn">작업자 매핑</button>
+        <button class="btn primary">내보내기</button>
+      </div>
+    </div>
+  </div>
+
+<script src="dist/chart.min.js"></script>
+<script>
+  const params = new URLSearchParams(location.search);
+  const c = params.get('c') || 'a';
+  document.documentElement.setAttribute('data-c', c);
+  document.getElementById('cname').textContent =
+    ({a:'컨셉 A · 미니멀 라이트', b:'컨셉 B · 다크 프로', c:'컨셉 C · 핀테크 볼드'})[c];
+
+  const data = [
+    { name:'김철수', qty:75, totes:2 },
+    { name:'이영희', qty:55, totes:2 },
+    { name:'박민수', qty:15, totes:3 },
+    { name:'정지훈', qty:12, totes:1 },
+  ];
+  const medal = ['🥇','🥈','🥉'];
+  function scores(wq){
+    const mq=Math.max(...data.map(d=>d.qty)),nq=Math.min(...data.map(d=>d.qty));
+    const mt=Math.max(...data.map(d=>d.totes)),nt=Math.min(...data.map(d=>d.totes));
+    const n=(v,a,b)=>b===a?100:(v-a)/(b-a)*100;
+    return data.map(d=>({name:d.name,qty:d.qty,totes:d.totes,eff:+(d.qty/d.totes).toFixed(1),
+      score:+(wq*n(d.qty,nq,mq)+(1-wq)*n(d.totes,nt,mt)).toFixed(1)}));
+  }
+  function leaderboard(elId, arr, key, unit, subFn){
+    const s=[...arr].sort((a,b)=>b[key]-a[key]);
+    const max=s[0][key]||1;
+    const el=document.getElementById(elId); el.innerHTML='';
+    s.forEach((d,i)=>{
+      const li=document.createElement('li');
+      if(i<3) li.className='t'+(i+1);
+      li.style.setProperty('--p', Math.max(6,(d[key]/max*100))+'%');
+      const rk = i<3 ? medal[i] : (i+1);
+      li.innerHTML = `<span class="rk">${rk}</span>`+
+        `<span><span class="nm">${d.name}</span>${subFn?`<div class="sub">${subFn(d)}</div>`:''}</span>`+
+        `<span class="vl">${d[key]}<small>${unit}</small></span>`;
+      el.appendChild(li);
+    });
+  }
+  const sc=scores(0.6);
+  leaderboard('lb-qty', sc, 'qty', '개');
+  leaderboard('lb-tote', sc, 'totes', '토트');
+  leaderboard('lb-score', sc, 'score', '점', d=>`수량 ${d.qty} · 토트 ${d.totes} · 효율 ${d.eff}`);
+
+  // 섹션1 차트
+  const rs=getComputedStyle(document.documentElement);
+  const barA=rs.getPropertyValue('--barA').trim().replace(/'/g,'')||'#4f46e5';
+  let barB=rs.getPropertyValue('--barB').trim().replace(/'/g,'')||'#94a3b8';
+  const tb=params.get('tb'); if(tb) barB=tb; // 토트 계열 색 오버라이드(시안 비교용)
+  const grid=rs.getPropertyValue('--grid').trim();
+  const muted=rs.getPropertyValue('--muted').trim();
+  Chart.defaults.font.family="'Pretendard','Apple SD Gothic Neo',-apple-system,sans-serif";
+  Chart.defaults.color=muted;
+  Chart.defaults.plugins.tooltip.backgroundColor='rgba(20,18,40,.92)';
+  Chart.defaults.plugins.tooltip.cornerRadius=10; Chart.defaults.plugins.tooltip.padding=10;
+  new Chart(document.getElementById('main'),{
+    type:'bar',
+    data:{labels:data.map(d=>d.name),datasets:[
+      {label:'수량',yAxisID:'y',borderRadius:7,data:data.map(d=>d.qty),backgroundColor:barA},
+      {label:'토트 수',yAxisID:'y1',borderRadius:7,data:data.map(d=>d.totes),backgroundColor:barB},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top',labels:{usePointStyle:true,boxWidth:8,font:{weight:'600'}}}},
+      scales:{x:{grid:{display:false},border:{display:false}},
+        y:{beginAtZero:true,grid:{color:grid},border:{display:false}},
+        y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},border:{display:false}}}}
+  });
+</script>
+</body>
+</html>
