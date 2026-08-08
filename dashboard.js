@@ -673,7 +673,7 @@
     // 붙여넣기 영역
     const ta = el('textarea', c('ta'));
     ta.id = 'pp-paste';
-    ta.placeholder = '예)\nW001\t김철수\nW002\t이영희\n… (엑셀 2열 복사 → 붙여넣기)';
+    ta.placeholder = '예)\nW001\t이진희\nW002\t박영진\n… (엑셀 2열 복사 → 붙여넣기)';
     ta.style.marginTop = '12px';
     bodyEl.append(ta);
     const applyRow = el('div', c('row'));
