@@ -180,6 +180,7 @@
     .${c('lb')} li.${c('t1')} .${c('vl')}{color:#4f46e5;}
 
     .${c('can-wrap')}{position:relative;width:100%;}
+    .${c('loading')}{max-width:420px;margin:40px auto 28px;}
     .${c('progress')}{height:8px;background:#ececef;border-radius:5px;overflow:hidden;margin:14px 0 6px;}
     .${c('progress')} div{height:100%;width:0;background:linear-gradient(90deg,#6366f1,#8b5cf6);transition:width .2s;}
     .${c('sliders')}{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:14px;
@@ -403,13 +404,15 @@
   function renderProgress() {
     state.view = 'progress';
     bodyEl.innerHTML = '';
-    bodyEl.append(el('div', c('h'), '<span class="' + c('spin') + '"></span>&nbsp;데이터 수집 중'));
+    const wrap = el('div', c('loading')); // 가운데 정렬 좁은 컨테이너
+    wrap.append(el('div', c('h'), '<span class="' + c('spin') + '"></span>&nbsp;데이터 수집 중'));
     const bar = el('div', c('progress'));
     bar.append(el('div'));
-    bodyEl.append(bar);
+    wrap.append(bar);
     const st = el('div', c('muted'), '준비 중…');
     st.id = 'pp-progress-status';
-    bodyEl.append(st);
+    wrap.append(st);
+    bodyEl.append(wrap);
     $('.' + c('progress') + ' div', bodyEl).id = 'pp-progress-bar';
   }
 
@@ -634,12 +637,15 @@
   /* ============================ 섹션1 차트 ============================ */
   function drawMainChart() {
     Chart.defaults.font.family = "'Pretendard','Apple SD Gothic Neo',-apple-system,sans-serif";
-    Chart.defaults.color = '#71717a';
+    Chart.defaults.font.size = 12;
+    Chart.defaults.color = '#3f3f46';   // 축·라벨 기본 글씨(진한 회색으로 대비 강화)
     Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(24,24,27,.92)';
     Chart.defaults.plugins.tooltip.cornerRadius = 10;
     Chart.defaults.plugins.tooltip.padding = 10;
 
     const grid = 'rgba(0,0,0,.06)';
+    const tickFont = { weight: '600' };
+    const axisTitle = (text) => ({ display: true, text, color: '#27272a', font: { weight: '700', size: 12 } });
     const byQty = [...state.agg].sort((a, b) => b.qty - a.qty);
     destroyChart('main');
     state.charts.main = new Chart($('#pp-chart-main', bodyEl), {
@@ -654,11 +660,11 @@
       options: {
         responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, font: { weight: '600' } } } },
+        plugins: { legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, color: '#27272a', font: { weight: '700', size: 12.5 } } } },
         scales: {
-          x: { grid: { display: false }, border: { display: false } },
-          y: { beginAtZero: true, position: 'left', grid: { color: grid }, border: { display: false }, title: { display: true, text: '수량' } },
-          y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, border: { display: false }, title: { display: true, text: '토트 수' } },
+          x: { grid: { display: false }, border: { display: false }, ticks: { color: '#3f3f46', font: tickFont } },
+          y: { beginAtZero: true, position: 'left', grid: { color: grid }, border: { display: false }, ticks: { color: '#3f3f46', font: tickFont }, title: axisTitle('수량') },
+          y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, border: { display: false }, ticks: { color: '#3f3f46', font: tickFont }, title: axisTitle('토트 수') },
         },
       },
     });
