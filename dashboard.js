@@ -659,6 +659,8 @@
       },
       options: {
         responsive: true, maintainAspectRatio: false,
+        // 캔버스를 최소 2x 해상도로 렌더 → 1x 화면에서도 글씨/막대가 흐릿하지 않게(이미지처럼 뭉개짐 방지)
+        devicePixelRatio: Math.min(3, Math.max(2, window.devicePixelRatio || 1)),
         interaction: { mode: 'index', intersect: false },
         plugins: { legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, color: '#27272a', font: { weight: '700', size: 12.5 } } } },
         scales: {
