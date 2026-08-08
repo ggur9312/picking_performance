@@ -16,11 +16,17 @@
 (function () {
   'use strict';
 
-  // 이미 열려 있으면 다시 열기만 한다.
-  if (window.__PP_DASHBOARD__) {
-    window.__PP_DASHBOARD__.open();
-    return;
-  }
+  // 이전 버전 인스턴스가 남아있으면 철거하고 이 버전으로 새로 구성한다.
+  // (재사용하면 예전 북마크릿 실행 후 새 북마크릿을 눌러도 옛 UI 가 그대로 열리는 문제가 생김)
+  try {
+    if (window.__PP_DASHBOARD__ && typeof window.__PP_DASHBOARD__.destroy === 'function') {
+      window.__PP_DASHBOARD__.destroy();
+    }
+    document.querySelectorAll('.' + 'pp-overlay').forEach((n) => n.remove());
+    const oldStyle = document.getElementById('pp-style');
+    if (oldStyle) oldStyle.remove();
+  } catch (e) { /* 무시 */ }
+  try { delete window.__PP_DASHBOARD__; } catch (e) { window.__PP_DASHBOARD__ = undefined; }
 
   /* ============================ 설정 상수 ============================ */
   const PREFIX = 'pp';
@@ -99,7 +105,8 @@
 
   /* ============================ 스타일 주입 (다크 프로) ============================ */
   function injectStyle() {
-    if (document.getElementById('pp-style')) return;
+    const existing = document.getElementById('pp-style');
+    if (existing) existing.remove(); // 항상 최신 CSS 로 교체
     const FONT = "'Pretendard','Apple SD Gothic Neo','Malgun Gothic',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
     const css = `
     .${c('overlay')}{position:fixed;inset:0;z-index:2147483000;
@@ -806,6 +813,7 @@
       if (!overlay) { buildWindow(); }
       renderConfig();
     },
+    destroy,  // 다음 버전 북마크릿이 깔끔히 철거할 수 있게 노출
     // 테스트 편의를 위해 내부 함수 노출
     _parseList: parseList,
     _parseDetail: parseDetail,
