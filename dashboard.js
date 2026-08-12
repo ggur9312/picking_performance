@@ -68,6 +68,9 @@
     charts: {},        // Chart 인스턴스 참조
     view: 'config',
     rangeLabel: '',
+    form: null,        // 마지막 입력 기간 { sd, st, ed, et } — 결과에서 돌아와도 유지(북마크 재실행 시 초기화)
+    excluded: new Set(), // 이번 결과에서 제외한 작업자 코드(세션 한정, localStorage 미저장)
+    meta: null,        // 마지막 결과 메타 { undated, total0 } — 삭제 후 재렌더 시 재사용
   };
 
   /* ============================ 유틸 ============================ */
@@ -151,6 +154,11 @@
     .${c('btn-primary')}{border:none;color:#fff;background:linear-gradient(135deg,#6366f1,#4f46e5);
       box-shadow:0 6px 18px rgba(79,70,229,.35);}
     .${c('btn-default')}{background:#f4f4f5;color:#18181b;} .${c('btn-ghost')}{background:transparent;border-color:transparent;color:#4f46e5;}
+    /* 작업자별 삭제(✕) 버튼 — 닫기 버튼과 동일한 hover 톤 */
+    .${c('del')}{flex:0 0 auto;width:22px;height:22px;border-radius:7px;border:1px solid #e4e4e7;background:#f4f4f5;
+      color:#a1a1aa;cursor:pointer;font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;
+      padding:0;transition:.15s;}
+    .${c('del')}:hover{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4);color:#dc2626;}
 
     .${c('card')}{background:#fafafb;border:1px solid #ececef;border-radius:14px;padding:18px;
       box-shadow:0 1px 2px rgba(0,0,0,.04);}
@@ -289,13 +297,15 @@
     bodyEl.append(el('div', c('muted'),
       'PICKING_CREATED 기준으로 조회합니다. 서버는 날짜 단위로 조회하고, 시간은 결과에서 추가로 필터링합니다.'));
 
+    // 결과에서 돌아오면 방금 입력한 기간을 유지(북마크 처음 실행 시에만 오늘로 초기화)
+    const f = state.form || {};
     const rowDates = el('div', c('row'));
     rowDates.style.marginTop = '14px';
     rowDates.append(
-      field('시작 날짜', 'pp-start-date', 'date', today),
-      field('시작 시간', 'pp-start-time', 'time', '00:00'),
-      field('종료 날짜', 'pp-end-date', 'date', today),
-      field('종료 시간', 'pp-end-time', 'time', '23:59'),
+      field('시작 날짜', 'pp-start-date', 'date', f.sd || today),
+      field('시작 시간', 'pp-start-time', 'time', f.st || '00:00'),
+      field('종료 날짜', 'pp-end-date', 'date', f.ed || today),
+      field('종료 시간', 'pp-end-time', 'time', f.et || '23:59'),
     );
 
     const rowBtns = el('div', c('row'));
@@ -349,6 +359,9 @@
     const ed = $('#pp-end-date', bodyEl).value;
     const et = $('#pp-end-time', bodyEl).value || '23:59';
     if (!sd || !ed) { alert('시작/종료 날짜를 입력하세요.'); return; }
+
+    state.form = { sd, st, ed, et }; // 결과에서 돌아와도 유지
+    state.excluded.clear();          // 새 조회 = 새 결과이므로 제외 목록 초기화(이번 결과에서만 제외)
 
     const startDT = new Date(sd + 'T' + st + ':00');
     const endDT = new Date(ed + 'T' + et + ':59');
@@ -465,6 +478,7 @@
     const byPicker = new Map();
     state.rows.forEach((r) => {
       const key = r.picker || '(미상)';
+      if (state.excluded.has(key)) return; // 이번 결과에서 삭제된 작업자는 집계에서 제외
       let g = byPicker.get(key);
       if (!g) { g = { picker: key, qty: 0, totes: new Set() }; byPicker.set(key, g); }
       g.qty += r.qty;
@@ -509,6 +523,7 @@
   /* ============================ 뷰: 결과 ============================ */
   function renderResults(meta) {
     state.view = 'results';
+    state.meta = meta || {}; // 삭제 후 재렌더 때 undated 안내 유지
     setChip(state.rangeLabel || '조회 완료');
     bodyEl.innerHTML = '';
 
@@ -577,7 +592,7 @@
 
     // 하단 버튼
     const footer = el('div', c('footer'));
-    const backBtn = el('button', c('btn') + ' ' + c('btn-ghost'), '← 조회 조건');
+    const backBtn = el('button', c('btn') + ' ' + c('btn-default'), '← 조회 조건');
     const mapBtn = el('button', c('btn') + ' ' + c('btn-default'), '작업자 매핑');
     footer.append(backBtn, mapBtn);
     bodyEl.append(footer);
@@ -624,7 +639,9 @@
         `<span class="${c('rk')}">${rk}</span>` +
         `<span><span class="${c('nm')}">${esc(a.name)}</span>` +
         (subFn ? `<div class="${c('sub')}">${subFn(a)}</div>` : '') + `</span>` +
-        `<span class="${c('vl')}">${val.toLocaleString()}<small>${unit}</small></span>`;
+        `<span class="${c('vl')}">${val.toLocaleString()}<small>${unit}</small></span>` +
+        `<button class="${c('del')}" type="button" title="이 작업자를 이번 결과에서 삭제">✕</button>`;
+      li.querySelector('.' + c('del')).addEventListener('click', () => removeWorker(a.picker));
       ol.append(li);
     });
   }
@@ -632,6 +649,13 @@
   function renderScoreBoard() {
     renderLeaderboard('pp-lb-score', (a) => a.score, '점',
       (a) => `수량 ${a.qty.toLocaleString()} · 토트 ${a.totes} · 효율 ${a.eff}`);
+  }
+
+  // 작업자를 이번 결과에서 삭제 → 재집계 후 결과 화면 전체 재렌더(차트·순위·요약 타일 반영)
+  function removeWorker(picker) {
+    state.excluded.add(picker);
+    aggregate();
+    renderResults(state.meta || {});
   }
 
   /* ============================ 섹션1 차트 ============================ */
@@ -708,7 +732,8 @@
     tblWrap.style.maxHeight = '38vh';
     tblWrap.style.overflow = 'auto';
     const tbl = el('table', c('table'));
-    tbl.innerHTML = '<thead><tr><th style="width:45%">집품작업자 (코드)</th><th>집품작업자 이름</th></tr></thead>';
+    tbl.innerHTML = '<thead><tr><th style="width:44%">집품작업자 (코드)</th><th>집품작업자 이름</th>' +
+      '<th style="width:44px;text-align:center">삭제</th></tr></thead>';
     const tbody = el('tbody');
     tbl.append(tbody);
     tblWrap.append(tbl);
@@ -718,7 +743,7 @@
       const list = Array.from(new Set([...codes, ...Object.keys(map)])).filter(Boolean).sort();
       tbody.innerHTML = '';
       if (!list.length) {
-        tbody.innerHTML = '<tr><td colspan="2" class="' + c('muted') +
+        tbody.innerHTML = '<tr><td colspan="3" class="' + c('muted') +
           '">먼저 조회를 실행하거나, 위 칸에 엑셀 데이터를 붙여넣으세요.</td></tr>';
         return;
       }
@@ -784,11 +809,21 @@
 
   function mapRow(code, name) {
     const tr = el('tr');
-    const td1 = el('td'), td2 = el('td');
+    const td1 = el('td'), td2 = el('td'), td3 = el('td');
+    td3.style.textAlign = 'center';
     const i1 = el('input'); i1.value = code; i1.placeholder = '코드';
     const i2 = el('input'); i2.value = name; i2.placeholder = '이름';
-    td1.append(i1); td2.append(i2);
-    tr.append(td1, td2);
+    const del = el('button', c('del'), '✕');
+    del.type = 'button';
+    del.title = '이 작업자를 표와 이번 결과에서 삭제';
+    // 행 삭제 + (코드가 있으면) 이번 결과에서 제외. 저장 시 aggregate() 가 반영.
+    del.addEventListener('click', () => {
+      const cd = i1.value.trim();
+      if (cd) state.excluded.add(cd);
+      tr.remove();
+    });
+    td1.append(i1); td2.append(i2); td3.append(del);
+    tr.append(td1, td2, td3);
     return tr;
   }
 
