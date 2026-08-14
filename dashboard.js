@@ -103,6 +103,7 @@
     if (m) return `${m}분 ${String(sec).padStart(2, '0')}초`;
     return `${sec}초`;
   };
+  const hhmm = (ms) => (ms == null ? '' : new Date(ms).toTimeString().slice(0, 5)); // ms → HH:MM
   // 간단 토스트(모달 위 하단 중앙, ~2s 후 사라짐)
   function showToast(msg) {
     if (!overlay) return;
@@ -202,6 +203,9 @@
     .${c('tile')} .${c('tval')}{font-size:26px;font-weight:800;letter-spacing:-.6px;color:#18181b;}
     .${c('tile')} .${c('tlbl')}{font-size:12px;color:#71717a;margin-top:3px;font-weight:600;}
     .${c('cards')}{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:16px;}
+    .${c('idlewrap')}{display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;}
+    .${c('idlecan')}{flex:1 1 420px;min-width:300px;height:280px;}
+    .${c('idlelist')}{flex:1 1 260px;min-width:240px;max-height:60vh;overflow:auto;align-self:flex-start;}
 
     /* 수치 순위 리스트 (leaderboard) */
     .${c('lb')}{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;}
@@ -623,6 +627,10 @@
         eff: g.totes.size ? +(g.qty / g.totes.size).toFixed(1) : 0,
         idleLast: idle.last, // 마지막 − 직전 완료 간격(ms)
         idleMax: idle.max,   // 기간 내 연속 완료 최대 간격(ms)
+        idleMaxStart: idle.maxStart, // 최대 간격 시작 완료 시각
+        idleMaxEnd: idle.maxEnd,     // 최대 간격 끝 완료 시각
+        firstDone: idle.first,       // 첫 완료 시각
+        lastDone: idle.lastDone,     // 마지막 완료 시각
       };
     });
     computeScores();
@@ -630,11 +638,18 @@
 
   // 완료 타임스탬프 배열 → 유휴 지표(ms). last=마지막−직전, max=연속 최대 간격.
   function computeIdle(dones) {
-    if (!dones || dones.length < 2) return { last: 0, max: 0 };
+    if (!dones || !dones.length) return { last: 0, max: 0, maxStart: null, maxEnd: null, first: null, lastDone: null };
     const s = dones.slice().sort((a, b) => a - b);
-    let max = 0;
-    for (let i = 1; i < s.length; i++) max = Math.max(max, s[i] - s[i - 1]);
-    return { last: s[s.length - 1] - s[s.length - 2], max: max };
+    if (s.length < 2) return { last: 0, max: 0, maxStart: null, maxEnd: null, first: s[0], lastDone: s[0] };
+    let max = 0, ms = null, me = null;
+    for (let i = 1; i < s.length; i++) {
+      const g = s[i] - s[i - 1];
+      if (g > max) { max = g; ms = s[i - 1]; me = s[i]; }
+    }
+    return {
+      last: s[s.length - 1] - s[s.length - 2], max: max,
+      maxStart: ms, maxEnd: me, first: s[0], lastDone: s[s.length - 1],
+    };
   }
 
   function computeScores() {
@@ -710,15 +725,27 @@
     wrap1.append(cv1); sec1.append(wrap1);
     bodyEl.append(sec1);
 
-    // 섹션 2: 수치 순위 리더보드
+    // 섹션 2: 수치 순위 리더보드 (수량 / 토트 / 종합)
     const cards = el('div', c('cards'));
     cards.append(
       lbCard('집품 수량 순위', c('dot'), 'pp-lb-qty'),
       lbCard('토트 수 순위', c('dot-a'), 'pp-lb-tote'),
       lbCard('종합 순위', c('dot-v'), 'pp-lb-score'),
-      lbCard('유휴시간 순위', c('dot-r'), 'pp-lb-idle'),
     );
     bodyEl.append(cards);
+
+    // 섹션 3: 유휴시간 (타임라인 간트 + 순위)
+    const sec3 = el('div', c('card'));
+    sec3.style.marginTop = '16px';
+    sec3.append(headline('유휴시간 — 작업 구간 · 최대 유휴 시간대', c('dot-r')));
+    const iwrap = el('div', c('idlewrap'));
+    const canBox = el('div', c('can-wrap') + ' ' + c('idlecan'));
+    const cvi = el('canvas'); cvi.id = 'pp-chart-idle';
+    canBox.append(cvi);
+    const iol = el('ol', c('lb') + ' ' + c('idlelist')); iol.id = 'pp-lb-idle';
+    iwrap.append(canBox, iol);
+    sec3.append(iwrap);
+    bodyEl.append(sec3);
 
     // 종합 순위 가중치 재조정 슬라이더
     const wRow = el('div', c('sliders'));
@@ -752,6 +779,7 @@
     renderScoreBoard();
     renderIdleBoard();
     drawMainChart();
+    drawIdleTimeline();
     setUpdating(false);   // 마지막 업데이트 시각 표시
     startRefresh();       // 자동 새로고침 재개(설정이 on 이면)
   }
@@ -809,6 +837,7 @@
     renderScoreBoard();
     renderIdleBoard();
     drawMainChart();
+    drawIdleTimeline();
     setUpdating(false);
   }
 
@@ -827,6 +856,7 @@
     const ol = $('#' + olId, bodyEl);
     if (!ol) return;
     const useMedal = !opts || opts.medal !== false;
+    const showDel = !!(opts && opts.del);
     const fmt = (opts && opts.fmt) || ((v) => v.toLocaleString() + `<small>${unit}</small>`);
     const arr = [...state.agg].sort((a, b) => valFn(b) - valFn(a));
     const max = arr.length ? (Math.max(...arr.map(valFn)) || 1) : 1;
@@ -841,21 +871,26 @@
         `<span><span class="${c('nm')}">${esc(a.name)}</span>` +
         (subFn ? `<div class="${c('sub')}">${subFn(a)}</div>` : '') + `</span>` +
         `<span class="${c('vl')}">${fmt(valFn(a))}</span>` +
-        `<button class="${c('del')}" type="button" title="이 작업자를 이번 결과에서 삭제">✕</button>`;
-      li.querySelector('.' + c('del')).addEventListener('click', () => removeWorker(a.picker));
+        (showDel ? `<button class="${c('del')}" type="button" title="이 작업자를 이번 결과에서 삭제">✕</button>` : '');
+      if (showDel) li.querySelector('.' + c('del')).addEventListener('click', () => removeWorker(a.picker));
       ol.append(li);
     });
   }
 
   function renderScoreBoard() {
+    // 삭제(✕) 버튼은 종합 순위에서만
     renderLeaderboard('pp-lb-score', (a) => a.score, '점',
-      (a) => `수량 ${a.qty.toLocaleString()} · 토트 ${a.totes} · 효율 ${a.eff}`);
+      (a) => `수량 ${a.qty.toLocaleString()} · 토트 ${a.totes} · 효율 ${a.eff}`,
+      { del: true });
   }
 
   // 유휴시간 순위: 마지막−직전 완료 간격 내림차순. 유휴는 보상이 아니므로 메달 대신 순위 숫자.
+  // 최대 유휴는 발생 시간대(HH:MM→HH:MM)도 함께 표시.
   function renderIdleBoard() {
     renderLeaderboard('pp-lb-idle', (a) => a.idleLast, '',
-      (a) => `최대 유휴 ${fmtDuration(a.idleMax)}`,
+      (a) => a.idleMax
+        ? `최대 유휴 ${fmtDuration(a.idleMax)} (${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)})`
+        : '최대 유휴 —',
       { fmt: (v) => fmtDuration(v), medal: false });
   }
 
@@ -906,6 +941,75 @@
 
   function destroyChart(key) {
     if (state.charts[key]) { try { state.charts[key].destroy(); } catch (e) {} delete state.charts[key]; }
+  }
+
+  /* ============================ 섹션3 유휴 타임라인(간트) ============================ */
+  function drawIdleTimeline() {
+    const canvas = $('#pp-chart-idle', bodyEl);
+    if (!canvas) return;
+    destroyChart('idle');
+
+    // 유휴시간(마지막−직전) 내림차순으로 작업자 정렬
+    const arr = [...state.agg].sort((a, b) => b.idleLast - a.idleLast);
+    const withTime = arr.filter((a) => a.firstDone != null);
+    const box = canvas.parentElement;
+    let note = box.querySelector('.' + c('idlenote'));
+
+    if (!withTime.length) { // 완료시간 데이터가 전혀 없을 때 (캔버스는 보존, 안내만 표시)
+      canvas.style.display = 'none';
+      if (!note) { note = el('div', c('idlenote') + ' ' + c('muted'), '완료시간 데이터가 없습니다. (상세 6번째 칸 확인)'); note.style.padding = '24px 4px'; box.append(note); }
+      box.style.height = 'auto';
+      return;
+    }
+    if (note) note.remove();
+    canvas.style.display = '';
+    box.style.height = Math.max(200, withTime.length * 46 + 44) + 'px';
+
+    const labels = withTime.map((a) => a.name);
+    const spanData = withTime.map((a) => [a.firstDone, a.lastDone]);           // 작업 구간
+    const gapData = withTime.map((a) => (a.idleMax ? [a.idleMaxStart, a.idleMaxEnd] : null)); // 최대 유휴 구간
+    const times = withTime.flatMap((a) => [a.firstDone, a.lastDone]);
+    const minT = Math.min(...times), maxT = Math.max(...times);
+    const pad = Math.max(60000, (maxT - minT) * 0.04); // 최소 1분 패딩
+
+    state.charts.idle = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: '작업 구간', data: spanData, backgroundColor: '#e4e4e7', borderRadius: 5,
+            grouped: false, order: 2, barPercentage: 0.55, categoryPercentage: 0.8 },
+          { label: '최대 유휴', data: gapData, backgroundColor: 'rgba(239,68,68,.85)', borderRadius: 5,
+            grouped: false, order: 1, barPercentage: 0.55, categoryPercentage: 0.8 },
+        ],
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        devicePixelRatio: Math.min(3, Math.max(2, window.devicePixelRatio || 1)),
+        plugins: {
+          legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, color: '#27272a', font: { weight: '700', size: 12 } } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const a = withTime[ctx.dataIndex];
+                if (ctx.datasetIndex === 1) {
+                  return a.idleMax ? `최대 유휴 ${fmtDuration(a.idleMax)} (${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)})` : '최대 유휴 없음';
+                }
+                return `작업 ${hhmm(a.firstDone)}→${hhmm(a.lastDone)}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'linear', min: minT - pad, max: maxT + pad,
+            grid: { color: 'rgba(0,0,0,.06)' }, border: { display: false },
+            ticks: { color: '#3f3f46', font: { weight: '600' }, maxTicksLimit: 8, callback: (v) => hhmm(v) },
+          },
+          y: { grid: { display: false }, border: { display: false }, ticks: { color: '#3f3f46', font: { weight: '700' } } },
+        },
+      },
+    });
   }
 
   /* ============================ 뷰: 작업자 매핑 (엑셀 붙여넣기) ============================ */
