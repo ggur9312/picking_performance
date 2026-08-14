@@ -32,6 +32,7 @@
   const PREFIX = 'pp';
   const LS_MAP = 'pp_worker_map';       // { picker: name }
   const LS_WEIGHTS = 'pp_weights';      // { qty: 0.6, tote: 0.4 }
+  const LS_REFRESH = 'pp_refresh';      // { on: true, intervalMs: 60000 }
   const CHART_CDN = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
   const CONCURRENCY = 6;                // 상세 페이지 동시 요청 수
 
@@ -71,6 +72,8 @@
     form: null,        // 마지막 입력 기간 { sd, st, ed, et } — 결과에서 돌아와도 유지(북마크 재실행 시 초기화)
     excluded: new Set(), // 이번 결과에서 제외한 작업자 코드(세션 한정, localStorage 미저장)
     meta: null,        // 마지막 결과 메타 { undated, total0 } — 삭제 후 재렌더 시 재사용
+    detailCache: new Map(), // href → { tote, picker, qty } — 새로고침 시 새 토트만 재요청
+    refresh: loadRefresh(), // { on, intervalMs, timer, busy, lastAt }
   };
 
   /* ============================ 유틸 ============================ */
@@ -104,6 +107,17 @@
     return { qty: 0.6, tote: 0.4 };
   }
   function saveWeights(w) { localStorage.setItem(LS_WEIGHTS, JSON.stringify(w)); }
+  function loadRefresh() {
+    let on = true, intervalMs = 60000;
+    try {
+      const r = JSON.parse(localStorage.getItem(LS_REFRESH));
+      if (r) { if (typeof r.on === 'boolean') on = r.on; if (r.intervalMs) intervalMs = r.intervalMs; }
+    } catch (e) {}
+    return { on, intervalMs, timer: null, busy: false, lastAt: null };
+  }
+  function saveRefresh() {
+    localStorage.setItem(LS_REFRESH, JSON.stringify({ on: state.refresh.on, intervalMs: state.refresh.intervalMs }));
+  }
   const displayName = (picker) => state.map[picker] || picker;
 
   /* ============================ 스타일 주입 (다크 프로) ============================ */
@@ -116,8 +130,8 @@
       background:rgba(17,18,22,.42);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
       display:flex;align-items:center;justify-content:center;font-family:${FONT};
       color:#18181b;-webkit-font-smoothing:antialiased;}
-    .${c('win')}{width:min(1060px,96vw);max-height:94vh;display:flex;flex-direction:column;
-      background:#ffffff;border:1px solid #e7e7ea;border-radius:20px;overflow:hidden;
+    .${c('win')}{width:96vw;height:94vh;max-width:none;display:flex;flex-direction:column;
+      background:#ffffff;border:1px solid #e7e7ea;border-radius:16px;overflow:hidden;
       box-shadow:0 24px 60px rgba(20,20,50,.22);}
     .${c('titlebar')}{display:flex;align-items:center;gap:12px;padding:16px 20px;
       border-bottom:1px solid #ececef;user-select:none;cursor:default;
@@ -188,9 +202,14 @@
     .${c('lb')} li.${c('t1')} .${c('vl')}{color:#4f46e5;}
 
     .${c('can-wrap')}{position:relative;width:100%;}
-    .${c('loading')}{max-width:420px;margin:40px auto 28px;}
+    .${c('loading')}{max-width:640px;margin:14vh auto 0;text-align:center;}
+    .${c('loading')} .${c('h')}{justify-content:center;font-size:20px;margin-bottom:20px;}
+    .${c('loading')} .${c('muted')}{font-size:14px;margin-top:12px;}
     .${c('progress')}{height:8px;background:#ececef;border-radius:5px;overflow:hidden;margin:14px 0 6px;}
+    .${c('loading')} .${c('progress')}{height:12px;border-radius:7px;}
     .${c('progress')} div{height:100%;width:0;background:linear-gradient(90deg,#6366f1,#8b5cf6);transition:width .2s;}
+    .${c('spin-lg')}{display:inline-block;width:34px;height:34px;border:4px solid #e4e4e7;
+      border-top-color:${COLOR_ACCENT};border-radius:50%;animation:pp-spin .7s linear infinite;vertical-align:-8px;margin-right:10px;}
     .${c('sliders')}{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:14px;
       background:#fafafb;border:1px solid #ececef;border-radius:14px;padding:12px 16px;}
     .${c('sliders')} label{font-size:12.5px;font-weight:600;color:#3f3f46;}
@@ -212,7 +231,21 @@
       border-top-color:${COLOR_ACCENT};border-radius:50%;animation:pp-spin .7s linear infinite;vertical-align:-3px;}
     @keyframes pp-spin{to{transform:rotate(360deg)}}
     .${c('note')}{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);color:#b45309;
-      padding:8px 12px;border-radius:8px;font-size:12px;margin-top:12px;}`;
+      padding:8px 12px;border-radius:8px;font-size:12px;margin-top:12px;}
+    /* 실시간 자동 새로고침 바 */
+    .${c('rbar')}{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;
+      background:#f4f4f5;border:1px solid #e4e4e7;border-radius:14px;padding:10px 16px;}
+    .${c('rlbl')}{font-size:13px;font-weight:700;color:#18181b;display:flex;align-items:center;gap:8px;}
+    .${c('sel')}{font:inherit;font-size:12.5px;font-weight:600;padding:6px 9px;border:1px solid #d4d4d8;
+      border-radius:8px;background:#fff;color:#18181b;color-scheme:light;cursor:pointer;}
+    .${c('rlast')}{margin-left:auto;font-size:12px;font-weight:600;color:#71717a;display:flex;align-items:center;gap:7px;}
+    .${c('sw')}{position:relative;width:42px;height:24px;flex:0 0 auto;cursor:pointer;}
+    .${c('sw')} input{opacity:0;width:0;height:0;position:absolute;}
+    .${c('sw')} span{position:absolute;inset:0;background:#d4d4d8;border-radius:999px;transition:.18s;}
+    .${c('sw')} span::before{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;
+      background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:.18s;}
+    .${c('sw')} input:checked + span{background:${COLOR_ACCENT};}
+    .${c('sw')} input:checked + span::before{transform:translateX(18px);}`;
     const s = el('style');
     s.id = 'pp-style';
     s.textContent = css;
@@ -274,6 +307,7 @@
   }
 
   function destroy() {
+    stopRefresh();
     Object.values(state.charts).forEach((ch) => { try { ch.destroy(); } catch (e) {} });
     state.charts = {};
     if (overlay) overlay.remove();
@@ -289,6 +323,7 @@
   /* ============================ 뷰: 설정 ============================ */
   function renderConfig() {
     state.view = 'config';
+    stopRefresh();
     setChip('조회 전');
     const today = todayLocal();
     bodyEl.innerHTML = '';
@@ -353,27 +388,46 @@
   }
 
   /* ============================ 조회 실행 ============================ */
-  async function onRun() {
+  // 수동 조회(버튼): 입력값을 form 으로 저장하고, 제외/캐시 초기화 후 큰 로딩과 함께 조회
+  function onRun() {
     const sd = $('#pp-start-date', bodyEl).value;
     const st = $('#pp-start-time', bodyEl).value || '00:00';
     const ed = $('#pp-end-date', bodyEl).value;
     const et = $('#pp-end-time', bodyEl).value || '23:59';
     if (!sd || !ed) { alert('시작/종료 날짜를 입력하세요.'); return; }
 
+    stopRefresh();
     state.form = { sd, st, ed, et }; // 결과에서 돌아와도 유지
-    state.excluded.clear();          // 새 조회 = 새 결과이므로 제외 목록 초기화(이번 결과에서만 제외)
+    state.excluded.clear();          // 새 조회 = 새 결과이므로 제외 목록 초기화
+    state.detailCache.clear();       // 새 조회 = 상세 캐시 초기화
+    runQuery({ silent: false });
+  }
 
+  // 조회 파이프라인(수동/자동 공통). silent=true 면 큰 로딩 없이 제자리 갱신.
+  async function runQuery(opts) {
+    const silent = !!(opts && opts.silent);
+    const f = state.form;
+    if (!f) return;
+    if (state.refresh.busy) return; // 중복 실행 방지
+    state.refresh.busy = true;
+
+    const { sd, st, ed, et } = f;
     const startDT = new Date(sd + 'T' + st + ':00');
     const endDT = new Date(ed + 'T' + et + ':59');
     state.rangeLabel = (sd === ed) ? `${sd} · ${st}~${et}` : `${sd} ${st} ~ ${ed} ${et}`;
 
-    renderProgress();
-    const p = $('#pp-progress-bar', bodyEl);
-    const status = $('#pp-progress-status', bodyEl);
+    let p, status;
+    if (!silent) {
+      renderProgress();
+      p = $('#pp-progress-bar', bodyEl);
+      status = $('#pp-progress-status', bodyEl);
+    } else {
+      setUpdating(true);
+    }
 
     try {
       // 1) 목록 조회
-      status.textContent = '목록 조회 중…';
+      if (status) status.textContent = '목록 조회 중…';
       const listUrl = MOCK ? new URL(MOCK.listUrl, location.href).href : LIST_URL(sd, ed);
       const listHtml = await fetchText(listUrl);
       const listDoc = new DOMParser().parseFromString(listHtml, 'text/html');
@@ -386,39 +440,58 @@
         if (!e.dt) { undated++; return true; } // 시각 미탐지는 보존
         return e.dt >= startDT && e.dt <= endDT;
       });
-      status.textContent = `대상 ${entries.length}건 (전체 ${total0}건) 상세 수집 중…`;
+      if (status) status.textContent = `대상 ${entries.length}건 (전체 ${total0}건) 상세 수집 중…`;
 
-      // 3) 상세 병렬 수집
+      // 3) 상세 수집 — 캐시에 없는 href 만 요청(자동 새로고침 부담 최소화)
       const rows = [];
       let done = 0;
       await pool(entries, CONCURRENCY, async (entry) => {
-        try {
-          const url = (MOCK && MOCK.detailUrl) ? MOCK.detailUrl : entry.href;
-          const html = await fetchText(url);
-          const doc = new DOMParser().parseFromString(html, 'text/html');
-          const rec = parseDetail(doc);
-          if (rec) rows.push(rec);
-        } catch (e) { /* 개별 실패는 건너뜀 */ }
+        const key = entry.href;
+        let rec = state.detailCache.get(key);
+        if (!rec) {
+          try {
+            const url = (MOCK && MOCK.detailUrl) ? MOCK.detailUrl : entry.href;
+            const html = await fetchText(url);
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            rec = parseDetail(doc);
+            if (rec) state.detailCache.set(key, rec);
+          } catch (e) { /* 개별 실패는 건너뜀 */ }
+        }
+        if (rec) rows.push(rec);
         done++;
-        p.style.width = (entries.length ? (done / entries.length * 100) : 100) + '%';
-        status.textContent = `상세 수집 ${done}/${entries.length}`;
+        if (p) p.style.width = (entries.length ? (done / entries.length * 100) : 100) + '%';
+        if (status) status.textContent = `상세 수집 ${done}/${entries.length}`;
       });
 
       state.rows = rows;
       aggregate();
+      state.refresh.lastAt = new Date();
       await ensureChart();
-      renderResults({ undated, total0 });
+
+      if (silent && state.view === 'results' && state.agg.length) {
+        updateResultsInPlace();
+      } else {
+        renderResults({ undated, total0 });
+      }
     } catch (err) {
-      status.innerHTML = '오류: ' + (err && err.message ? err.message : err) +
-        '<br><span class="' + c('muted') + '">쿠팡에 로그인된 상태에서 실행해야 합니다.</span>';
+      if (status) {
+        status.innerHTML = '오류: ' + (err && err.message ? err.message : err) +
+          '<br><span class="' + c('muted') + '">쿠팡에 로그인된 상태에서 실행해야 합니다.</span>';
+      } else {
+        setUpdating(false, '업데이트 실패 · 다음 주기 재시도');
+      }
+    } finally {
+      state.refresh.busy = false;
+      if (silent) setUpdating(false);
     }
   }
 
   function renderProgress() {
     state.view = 'progress';
+    stopRefresh();
     bodyEl.innerHTML = '';
-    const wrap = el('div', c('loading')); // 가운데 정렬 좁은 컨테이너
-    wrap.append(el('div', c('h'), '<span class="' + c('spin') + '"></span>&nbsp;데이터 수집 중'));
+    const wrap = el('div', c('loading'));
+    wrap.append(el('div', c('h'), '<span class="' + c('spin-lg') + '"></span>데이터 수집 중'));
     const bar = el('div', c('progress'));
     bar.append(el('div'));
     wrap.append(bar);
@@ -427,6 +500,28 @@
     wrap.append(st);
     bodyEl.append(wrap);
     $('.' + c('progress') + ' div', bodyEl).id = 'pp-progress-bar';
+  }
+
+  /* ============================ 실시간 자동 새로고침 ============================ */
+  function startRefresh() {
+    stopRefresh();
+    if (!state.refresh.on) return;
+    state.refresh.timer = setInterval(() => {
+      if (state.view === 'results' && !state.refresh.busy) runQuery({ silent: true });
+    }, state.refresh.intervalMs);
+  }
+  function stopRefresh() {
+    if (state.refresh.timer) { clearInterval(state.refresh.timer); state.refresh.timer = null; }
+  }
+  // 자동 새로고침 상태 표시(스피너 + 마지막 업데이트 시각)
+  function setUpdating(on, failMsg) {
+    const box = $('#pp-rlast', bodyEl);
+    if (!box) return;
+    const t = state.refresh.lastAt;
+    const hhmmss = t ? t.toTimeString().slice(0, 8) : '—';
+    box.innerHTML = on
+      ? `<span class="${c('spin')}"></span> 업데이트 중…`
+      : (failMsg ? esc(failMsg) : `마지막 업데이트 ${hhmmss}`);
   }
 
   /* ============================ 파싱 ============================ */
@@ -537,15 +632,18 @@
       return;
     }
 
-    // 요약 타일
+    // 실시간 자동 새로고침 바
+    bodyEl.append(buildRefreshBar());
+
+    // 요약 타일 (값 span 에 id 부여 → 자동 새로고침 시 제자리 갱신)
     const totQ = state.agg.reduce((s, a) => s + a.qty, 0);
     const totT = state.agg.reduce((s, a) => s + a.totes, 0);
     const tiles = el('div', c('tiles'));
     tiles.append(
-      tile(totQ.toLocaleString(), '총 집품 수량'),
-      tile(totT.toLocaleString(), '총 토트 수'),
-      tile(String(state.agg.length), '작업자 수'),
-      tile(totT ? (totQ / totT).toFixed(1) : '0', '토트당 평균 수량'),
+      tile(totQ.toLocaleString(), '총 집품 수량', 'pp-t-qty'),
+      tile(totT.toLocaleString(), '총 토트 수', 'pp-t-tote'),
+      tile(String(state.agg.length), '작업자 수', 'pp-t-workers'),
+      tile(totT ? (totQ / totT).toFixed(1) : '0', '토트당 평균 수량', 'pp-t-avg'),
     );
     bodyEl.append(tiles);
 
@@ -559,7 +657,7 @@
     sec1.style.marginTop = '18px';
     sec1.append(headline('종합 대시보드 — 작업자별 수량 · 토트 수'));
     const wrap1 = el('div', c('can-wrap'));
-    wrap1.style.height = '300px';
+    wrap1.style.height = 'clamp(340px, 44vh, 620px)';
     const cv1 = el('canvas'); cv1.id = 'pp-chart-main';
     wrap1.append(cv1); sec1.append(wrap1);
     bodyEl.append(sec1);
@@ -604,12 +702,63 @@
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderScoreBoard();
     drawMainChart();
+    setUpdating(false);   // 마지막 업데이트 시각 표시
+    startRefresh();       // 자동 새로고침 재개(설정이 on 이면)
   }
 
-  function tile(val, lbl) {
+  function tile(val, lbl, valId) {
     const t = el('div', c('tile'));
-    t.append(el('div', c('tval'), val), el('div', c('tlbl'), lbl));
+    const v = el('div', c('tval'), val);
+    if (valId) v.id = valId;
+    t.append(v, el('div', c('tlbl'), lbl));
     return t;
+  }
+
+  // 실시간 자동 새로고침 바 (토글 + 주기 + 마지막 업데이트)
+  function buildRefreshBar() {
+    const bar = el('div', c('rbar'));
+    const lbl = el('label', c('rlbl'));
+    const sw = el('span', c('sw'));
+    sw.innerHTML = `<input type="checkbox" ${state.refresh.on ? 'checked' : ''}><span></span>`;
+    lbl.append(sw, document.createTextNode('실시간 자동 새로고침'));
+    const sel = el('select', c('sel'));
+    [['30초', 30000], ['1분', 60000], ['5분', 300000]].forEach(([t, v]) => {
+      const o = el('option', null, t); o.value = String(v);
+      if (v === state.refresh.intervalMs) o.selected = true;
+      sel.append(o);
+    });
+    const last = el('div', c('rlast'));
+    last.id = 'pp-rlast';
+    bar.append(lbl, sel, last);
+
+    sw.querySelector('input').addEventListener('change', (e) => {
+      state.refresh.on = e.target.checked;
+      saveRefresh();
+      if (state.refresh.on) { startRefresh(); runQuery({ silent: true }); }
+      else { stopRefresh(); setUpdating(false); }
+    });
+    sel.addEventListener('change', (e) => {
+      state.refresh.intervalMs = +e.target.value;
+      saveRefresh();
+      if (state.refresh.on) startRefresh();
+    });
+    return bar;
+  }
+
+  // 자동 새로고침 시 화면을 다시 그리지 않고 데이터만 제자리 갱신
+  function updateResultsInPlace() {
+    const totQ = state.agg.reduce((s, a) => s + a.qty, 0);
+    const totT = state.agg.reduce((s, a) => s + a.totes, 0);
+    const set = (id, v) => { const n = $('#' + id, bodyEl); if (n) n.textContent = v; };
+    set('pp-t-qty', totQ.toLocaleString());
+    set('pp-t-tote', totT.toLocaleString());
+    set('pp-t-workers', String(state.agg.length));
+    set('pp-t-avg', totT ? (totQ / totT).toFixed(1) : '0');
+    renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
+    renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
+    renderScoreBoard();
+    drawMainChart();
+    setUpdating(false);
   }
 
   function lbCard(title, dotClass, olId) {
