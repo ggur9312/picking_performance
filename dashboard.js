@@ -201,7 +201,7 @@
 
     .${c('card')}{background:#fafafb;border:1px solid #ececef;border-radius:14px;padding:18px;
       box-shadow:0 1px 2px rgba(0,0,0,.04);}
-    .${c('tiles')}{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;}
+    .${c('tiles')}{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px;}
     .${c('tile')}{background:#fafafb;border:1px solid #ececef;border-radius:14px;padding:14px 16px;}
     .${c('tile')} .${c('tval')}{font-size:26px;font-weight:800;letter-spacing:-.6px;color:#18181b;}
     .${c('tile')} .${c('tlbl')}{font-size:12px;color:#71717a;margin-top:3px;font-weight:600;}
@@ -634,6 +634,7 @@
         idleMaxEnd: idle.maxEnd,     // 최대 간격 끝 완료 시각
         idleLastStart: idle.lastStart, // 유휴시간(마지막−직전) 시작 완료 시각
         idleLastEnd: idle.lastEnd,     // 유휴시간(마지막−직전) 끝 완료 시각
+        doneCount: g.dones.length,     // 완료 건수(평균 유휴 계산용)
         firstDone: idle.first,       // 첫 완료 시각
         lastDone: idle.lastDone,     // 마지막 완료 시각
       };
@@ -657,6 +658,18 @@
       lastStart: s[s.length - 2], lastEnd: s[s.length - 1], // 유휴시간(마지막−직전) 구간
       first: s[0], lastDone: s[s.length - 1],
     };
+  }
+
+  // 평균 유휴 시간(ms): 전체 완료 간격 평균 = Σ(마지막−첫 완료) ÷ Σ(완료건수−1)
+  function avgIdleGap() {
+    let span = 0, gaps = 0;
+    state.agg.forEach((a) => {
+      if (a.doneCount >= 2 && a.firstDone != null && a.lastDone != null) {
+        span += (a.lastDone - a.firstDone);
+        gaps += (a.doneCount - 1);
+      }
+    });
+    return gaps ? span / gaps : 0;
   }
 
   function computeScores() {
@@ -714,6 +727,7 @@
       tile(totT.toLocaleString(), '총 토트 수', 'pp-t-tote'),
       tile(String(state.agg.length), '작업자 수', 'pp-t-workers'),
       tile(totT ? (totQ / totT).toFixed(1) : '0', '토트당 평균 수량', 'pp-t-avg'),
+      tile(fmtDuration(avgIdleGap()), '평균 유휴 시간', 'pp-t-idleavg'),
     );
     bodyEl.append(tiles);
 
@@ -845,6 +859,7 @@
     set('pp-t-tote', totT.toLocaleString());
     set('pp-t-workers', String(state.agg.length));
     set('pp-t-avg', totT ? (totQ / totT).toFixed(1) : '0');
+    set('pp-t-idleavg', fmtDuration(avgIdleGap()));
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderScoreBoard();
