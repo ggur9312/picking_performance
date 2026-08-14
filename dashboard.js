@@ -1214,40 +1214,38 @@
     for (let d = 0; d < maxGaps; d++) {
       gapSets.push({
         label: d === 0 ? '유휴 구간' : '', // 범례는 첫 세그먼트만
+        _kind: 'idle',
         data: withTime.map((a) => (a.idleGaps[d] ? [a.idleGaps[d].s, a.idleGaps[d].e] : null)),
         backgroundColor: 'rgba(239,68,68,.85)', borderRadius: 5,
         grouped: false, order: 1, barPercentage: 0.55, categoryPercentage: 0.8,
       });
     }
 
-    // 휴게 시간대를 회색 세로 밴드로 표시(막대는 위에 그려짐)
-    const breakPlugin = {
-      id: 'breakband',
-      beforeDatasetsDraw(chart) {
-        const x = chart.scales.x, area = chart.chartArea;
-        const wins = breakWindowsIn(x.min, x.max);
-        if (!wins.length) return;
-        const ctx2 = chart.ctx;
-        ctx2.save();
-        ctx2.fillStyle = 'rgba(113,113,122,.10)';
-        wins.forEach(([ws, we]) => {
-          const x1 = x.getPixelForValue(Math.max(ws, x.min));
-          const x2 = x.getPixelForValue(Math.min(we, x.max));
-          ctx2.fillRect(x1, area.top, x2 - x1, area.bottom - area.top);
-        });
-        ctx2.restore();
-      },
-    };
+    // 휴게 시간대를 작업 구간과 겹치는 부분만 막대 위 파란 세그먼트로 표시(가림막 대신)
+    const breakSegs = withTime.map((a) => breakWindowsIn(a.firstDone, a.lastDone)
+      .map(([ws, we]) => [Math.max(ws, a.firstDone), Math.min(we, a.lastDone)])
+      .filter(([s, e]) => e > s));
+    const maxBreaks = Math.max(0, ...breakSegs.map((b) => b.length));
+    const breakSets = [];
+    for (let d = 0; d < maxBreaks; d++) {
+      breakSets.push({
+        label: d === 0 ? '휴게' : '',
+        _kind: 'break',
+        data: breakSegs.map((b) => b[d] || null),
+        backgroundColor: 'rgba(59,130,246,.85)', borderRadius: 5,
+        grouped: false, order: 0, barPercentage: 0.55, categoryPercentage: 0.8,
+      });
+    }
 
     state.charts.idle = new Chart(canvas, {
       type: 'bar',
-      plugins: [breakPlugin],
       data: {
         labels: labels,
         datasets: [
           { label: '작업 구간', data: spanData, backgroundColor: '#e4e4e7', borderRadius: 5,
             grouped: false, order: 2, barPercentage: 0.55, categoryPercentage: 0.8 },
           ...gapSets,
+          ...breakSets,
         ],
       },
       options: {
@@ -1264,6 +1262,7 @@
                 }
                 const seg = ctx.raw; // [s, e]
                 if (!seg) return null;
+                if (ctx.dataset._kind === 'break') return `휴게 ${hhmm(seg[0])}→${hhmm(seg[1])}`;
                 return `유휴 ${fmtDuration(seg[1] - seg[0])} (${hhmm(seg[0])}→${hhmm(seg[1])})`;
               },
             },
