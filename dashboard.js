@@ -892,10 +892,11 @@
   // 유휴시간 순위: 마지막−직전 완료 간격 내림차순. 유휴는 보상이 아니므로 메달 대신 순위 숫자.
   // 최대 유휴는 발생 시간대(HH:MM→HH:MM)도 함께 표시.
   function renderIdleBoard() {
-    renderLeaderboard('pp-lb-idle', (a) => a.idleLast, '',
+    // 최대 유휴시간 기준 순위. 값=최대 유휴, sub=발생 시간대 + 참고로 최근 간격.
+    renderLeaderboard('pp-lb-idle', (a) => a.idleMax, '',
       (a) => a.idleMax
-        ? `최대 유휴 ${fmtDuration(a.idleMax)} (${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)})`
-        : '최대 유휴 —',
+        ? `${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)} · 최근 ${fmtDuration(a.idleLast)}`
+        : '—',
       { fmt: (v) => fmtDuration(v), medal: false });
   }
 
@@ -955,7 +956,7 @@
     destroyChart('idle');
 
     // 유휴시간(마지막−직전) 내림차순으로 작업자 정렬
-    const arr = [...state.agg].sort((a, b) => b.idleLast - a.idleLast);
+    const arr = [...state.agg].sort((a, b) => b.idleMax - a.idleMax);
     const withTime = arr.filter((a) => a.firstDone != null);
     const box = canvas.parentElement;
     let note = box.querySelector('.' + c('idlenote'));
