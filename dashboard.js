@@ -683,8 +683,12 @@
       if (r.tote) g.totes.add(r.tote);
       if (r.done != null) g.dones.push(r.done);
     });
+    // 조회 종료가 현재 이후(=진행 중 범위)일 때만 '지금'을 진행 중 유휴 기준으로 사용. 과거 리포트는 null.
+    const endMs = state.form ? new Date(state.form.ed + 'T' + state.form.et + ':59').getTime() : null;
+    const now = Date.now();
+    const liveNow = (endMs != null && endMs >= now) ? now : null;
     state.agg = Array.from(byPicker.values()).map((g) => {
-      const idle = computeIdle(g.dones);
+      const idle = computeIdle(g.dones, liveNow);
       return {
         picker: g.picker,
         name: displayName(g.picker),
@@ -694,7 +698,8 @@
         idleLast: idle.last, // 마지막 − 직전 완료 간격(ms)
         idleMax: idle.max,   // 기간 내 연속 완료 최대 간격(ms)
         idleMaxStart: idle.maxStart, // 최대 간격 시작 완료 시각
-        idleMaxEnd: idle.maxEnd,     // 최대 간격 끝 완료 시각
+        idleMaxEnd: idle.maxEnd,     // 최대 간격 끝 완료 시각(진행 중이면 '지금')
+        idleMaxOngoing: idle.maxOngoing, // 최대 유휴가 '진행 중(지금까지)'인지
         idleLastStart: idle.lastStart, // 유휴시간(마지막−직전) 시작 완료 시각
         idleLastEnd: idle.lastEnd,     // 유휴시간(마지막−직전) 끝 완료 시각
         doneCount: g.dones.length,     // 완료 건수(평균 유휴 계산용)
@@ -706,21 +711,29 @@
   }
 
   // 완료 타임스탬프 배열 → 유휴 지표(ms). last=마지막−직전, max=연속 최대 간격.
-  function computeIdle(dones) {
-    if (!dones || !dones.length) return { last: 0, max: 0, maxStart: null, maxEnd: null, lastStart: null, lastEnd: null, first: null, lastDone: null };
+  // liveNow(ms|null): 조회 범위가 현재를 포함할 때의 '지금' 시각. 주면 진행 중 유휴(지금−마지막 완료)를
+  // 최대 유휴 후보에 포함해 실시간으로 커진다. null 이면 완료 사이 닫힌 간격만(현행 동작).
+  function computeIdle(dones, liveNow) {
+    const base = { last: 0, max: 0, maxStart: null, maxEnd: null, lastStart: null, lastEnd: null, first: null, lastDone: null, maxOngoing: false };
+    if (!dones || !dones.length) return base;
     const s = dones.slice().sort((a, b) => a - b);
-    if (s.length < 2) return { last: 0, max: 0, maxStart: null, maxEnd: null, lastStart: null, lastEnd: null, first: s[0], lastDone: s[0] };
-    let max = 0, ms = null, me = null;
-    for (let i = 1; i < s.length; i++) {
-      const g = s[i] - s[i - 1];
-      if (g > max) { max = g; ms = s[i - 1]; me = s[i]; }
+    const first = s[0], lastDone = s[s.length - 1];
+    let max = 0, ms = null, me = null, last = 0, lastStart = null, lastEnd = null;
+    if (s.length >= 2) {
+      for (let i = 1; i < s.length; i++) {
+        const g = s[i] - s[i - 1];
+        if (g > max) { max = g; ms = s[i - 1]; me = s[i]; }
+      }
+      last = lastDone - s[s.length - 2];
+      lastStart = s[s.length - 2]; lastEnd = lastDone; // 유휴시간(마지막−직전) 구간
     }
-    return {
-      last: s[s.length - 1] - s[s.length - 2], max: max,
-      maxStart: ms, maxEnd: me,
-      lastStart: s[s.length - 2], lastEnd: s[s.length - 1], // 유휴시간(마지막−직전) 구간
-      first: s[0], lastDone: s[s.length - 1],
-    };
+    // 진행 중 유휴(지금 − 마지막 완료) — 닫힌 최대 간격보다 크면 그것이 최대 유휴가 됨
+    let maxOngoing = false;
+    if (liveNow != null && lastDone != null && liveNow > lastDone) {
+      const ongoing = liveNow - lastDone;
+      if (ongoing > max) { max = ongoing; ms = lastDone; me = liveNow; maxOngoing = true; }
+    }
+    return { last, max, maxStart: ms, maxEnd: me, lastStart, lastEnd, first, lastDone, maxOngoing };
   }
 
   // 평균 유휴 시간(ms): 전체 완료 간격 평균 = Σ(마지막−첫 완료) ÷ Σ(완료건수−1)
@@ -985,10 +998,12 @@
       (a) => a.idleLast ? `${hhmm(a.idleLastStart)}→${hhmm(a.idleLastEnd)}` : '—',
       { fmt: (v) => fmtDuration(v), medal: false });
   }
-  // 최대유휴시간 순위: 기간 내 연속 완료 최대 간격 기준
+  // 최대유휴시간 순위: 기간 내 연속 완료 최대 간격 기준. 진행 중(지금까지 유휴)이면 '현재 · 진행 중' 표기.
   function renderIdleMaxBoard() {
     renderLeaderboard('pp-lb-idle-max', (a) => a.idleMax, '',
-      (a) => a.idleMax ? `${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)}` : '—',
+      (a) => a.idleMax
+        ? `${hhmm(a.idleMaxStart)}→${a.idleMaxOngoing ? '현재' : hhmm(a.idleMaxEnd)}${a.idleMaxOngoing ? ' · 진행 중' : ''}`
+        : '—',
       { fmt: (v) => fmtDuration(v), medal: false });
   }
 
@@ -1068,7 +1083,9 @@
     const spanData = withTime.map((a) => [a.firstDone, a.lastDone]);           // 작업 구간
     const gapData = withTime.map((a) => (a.idleMax ? [a.idleMaxStart, a.idleMaxEnd] : null)); // 최대 유휴 구간
     const times = withTime.flatMap((a) => [a.firstDone, a.lastDone]);
-    const minT = Math.min(...times), maxT = Math.max(...times);
+    // 진행 중 유휴의 종료(=지금)까지 축을 늘려, 열린 빨강 막대가 현재 시각까지 그려지게 함
+    const liveEnds = withTime.filter((a) => a.idleMaxOngoing).map((a) => a.idleMaxEnd);
+    const minT = Math.min(...times), maxT = Math.max(...times, ...liveEnds);
     const pad = Math.max(60000, (maxT - minT) * 0.04); // 최소 1분 패딩
 
     state.charts.idle = new Chart(canvas, {
@@ -1092,7 +1109,10 @@
               label: (ctx) => {
                 const a = withTime[ctx.dataIndex];
                 if (ctx.datasetIndex === 1) {
-                  return a.idleMax ? `최대 유휴 ${fmtDuration(a.idleMax)} (${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)})` : '최대 유휴 없음';
+                  if (!a.idleMax) return '최대 유휴 없음';
+                  return a.idleMaxOngoing
+                    ? `최대 유휴 ${fmtDuration(a.idleMax)} (${hhmm(a.idleMaxStart)}→현재, 진행 중)`
+                    : `최대 유휴 ${fmtDuration(a.idleMax)} (${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)})`;
                 }
                 return `작업 ${hhmm(a.firstDone)}→${hhmm(a.lastDone)}`;
               },
