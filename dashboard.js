@@ -34,6 +34,7 @@
   const LS_WEIGHTS = 'pp_weights';      // { qty: 0.6, tote: 0.4 }
   const LS_REFRESH = 'pp_refresh';      // { on: true, intervalMs: 60000 }
   const LS_BREAK = 'pp_break';          // { on: true, start: '22:00', end: '23:00' }
+  const LS_IDLEMIN = 'pp_idlemin';      // 최소 유휴 기준(분) — 이 이상만 유휴로 집계
   const CHART_CDN = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
   const CONCURRENCY = 6;                // 상세 페이지 동시 요청 수
 
@@ -77,6 +78,7 @@
     detailCache: new Map(), // href → { tote, picker, qty } — 새로고침 시 새 토트만 재요청
     refresh: loadRefresh(), // { on, intervalMs, timer, busy, lastAt }
     break: loadBreak(),     // { on, start, end } — 휴게 시간대(유휴 계산 제외)
+    minIdle: loadMinIdle(), // 최소 유휴 기준(분) — 이 이상 벌어진 간격만 유휴
   };
 
   /* ============================ 유틸 ============================ */
@@ -153,6 +155,11 @@
   function saveBreak() {
     localStorage.setItem(LS_BREAK, JSON.stringify({ on: state.break.on, start: state.break.start, end: state.break.end }));
   }
+  function loadMinIdle() {
+    try { const v = JSON.parse(localStorage.getItem(LS_IDLEMIN)); if (typeof v === 'number' && v >= 0) return v; } catch (e) {}
+    return 30; // 기본 30분
+  }
+  function saveMinIdle() { localStorage.setItem(LS_IDLEMIN, JSON.stringify(state.minIdle)); }
   const displayName = (picker) => state.map[picker] || picker;
   // 매핑된 작업자는 코드도 함께 노출 (미매핑이면 코드만)
   const codeOf = (a) => (a.name && a.name !== a.picker) ? a.picker : '';
@@ -442,7 +449,24 @@
       field('종료', 'pp-break-end', 'time', state.break.end));
     bCard.append(brow);
 
-    bodyEl.append(rowDates, rowBtns, wCard, bCard);
+    // 최소 유휴 시간 (이 이상만 유휴로 집계)
+    const iCard = el('div', c('card'));
+    iCard.style.marginTop = '20px';
+    iCard.append(headline('최소 유휴 시간'));
+    iCard.append(el('div', c('muted'),
+      '이 시간 이상 벌어진 간격만 유휴로 집계합니다(유휴시간·최대 유휴·평균·간트). 짧은 간격은 정상 작업으로 봅니다.'));
+    const irow = el('div', c('row'));
+    irow.style.marginTop = '14px';
+    irow.style.alignItems = 'center';
+    const ifield = el('div', c('field'));
+    const ilbl = el('label', null, '기준 시간(분)'); ilbl.setAttribute('for', 'pp-minidle');
+    const iinput = el('input'); iinput.id = 'pp-minidle'; iinput.type = 'number'; iinput.min = '0'; iinput.step = '1';
+    iinput.value = String(state.minIdle); iinput.style.maxWidth = '120px';
+    ifield.append(ilbl, iinput);
+    irow.append(ifield);
+    iCard.append(irow);
+
+    bodyEl.append(rowDates, rowBtns, wCard, bCard, iCard);
 
     $('#pp-wq', bodyEl).addEventListener('input', (e) => {
       const q = +e.target.value;
@@ -461,6 +485,13 @@
     $('#pp-break-on', bodyEl).addEventListener('change', onBreakChange);
     $('#pp-break-start', bodyEl).addEventListener('change', onBreakChange);
     $('#pp-break-end', bodyEl).addEventListener('change', onBreakChange);
+
+    $('#pp-minidle', bodyEl).addEventListener('change', (e) => {
+      const v = Math.max(0, Math.floor(+e.target.value || 0));
+      e.target.value = String(v);
+      state.minIdle = v;
+      saveMinIdle();
+    });
 
     runBtn.addEventListener('click', onRun);
     mapBtn.addEventListener('click', () => renderMapping('config'));
@@ -794,46 +825,47 @@
     return out;
   }
 
-  // 완료 타임스탬프 배열 → 유휴 지표(ms). 휴게 시간대는 모든 유휴에서 제외.
-  // last=마지막−직전 완료 간격(휴게 뺌), max=가장 긴 연속 유휴 세그먼트(휴게로 끊기면 분할).
-  // liveNow(ms|null): 조회 범위가 현재 포함 시 '지금'. ongoing=진행 중 유휴(지금−마지막, 휴게 뺌).
+  // 완료 타임스탬프 배열 → 유휴 지표(ms). 휴게 시간대 제외 + 최소 유휴 기준(T) 이상만 유휴로 집계.
+  // last=마지막−직전 완료 간격(휴게 뺀 값, 기준 미만이면 0), max=가장 긴 연속 유휴 세그먼트(기준 이상).
+  // liveNow(ms|null): 조회 범위가 현재 포함 시 '지금'. ongoing=진행 중 유휴(지금−마지막, 휴게 뺌, 기준 이상).
   function computeIdle(dones, liveNow) {
     const base = { last: 0, max: 0, maxStart: null, maxEnd: null, lastStart: null, lastEnd: null, first: null, lastDone: null, ongoing: 0, gaps: [] };
     if (!dones || !dones.length) return base;
+    const T = (state.minIdle || 0) * 60000; // 최소 유휴 기준(ms). 0이면 필터 없음.
     const s = dones.slice().sort((a, b) => a - b);
     const first = s[0], lastDone = s[s.length - 1];
-    // 연속 완료 간격마다 휴게를 뺀 유휴 세그먼트를 모음(간트에 전부 기록 · 최대 연속 유휴 계산)
+    // 연속 완료 간격마다 휴게를 뺀 유휴 세그먼트 중 기준(T) 이상만 모음(간트 · 최대 연속 유휴)
     const gaps = [];
     let max = 0, ms = null, me = null;
     for (let i = 1; i < s.length; i++) {
       subtractBreaks(s[i - 1], s[i]).forEach(([a, b]) => {
+        if (b - a < T) return; // 기준 미만 = 정상 작업(유휴 아님)
         gaps.push({ s: a, e: b });
         if (b - a > max) { max = b - a; ms = a; me = b; }
       });
     }
-    // 유휴시간(마지막−직전 완료 간격, 휴게 제외)
+    // 유휴시간(마지막−직전 완료 간격, 휴게 제외, 기준 미만이면 0)
     let last = 0, lastStart = null, lastEnd = null;
     if (s.length >= 2) {
       const ps = s[s.length - 2];
-      last = (lastDone - ps) - breakOverlapMs(ps, lastDone);
+      const raw = (lastDone - ps) - breakOverlapMs(ps, lastDone);
+      last = raw >= T ? raw : 0;
       lastStart = ps; lastEnd = lastDone;
     }
-    // 진행 중 유휴(지금 − 마지막 완료, 휴게 제외)
-    const ongoing = (liveNow != null && lastDone != null && liveNow > lastDone)
-      ? Math.max(0, (liveNow - lastDone) - breakOverlapMs(lastDone, liveNow)) : 0;
+    // 진행 중 유휴(지금 − 마지막 완료, 휴게 제외, 기준 미만이면 0)
+    let ongoing = 0;
+    if (liveNow != null && lastDone != null && liveNow > lastDone) {
+      const raw = (liveNow - lastDone) - breakOverlapMs(lastDone, liveNow);
+      ongoing = raw >= T ? Math.max(0, raw) : 0;
+    }
     return { last, max, maxStart: ms, maxEnd: me, lastStart, lastEnd, first, lastDone, ongoing, gaps };
   }
 
-  // 평균 유휴 시간(ms): 전체 완료 간격 평균 = Σ(마지막−첫 완료, 휴게 제외) ÷ Σ(완료건수−1)
+  // 평균 유휴 시간(ms): 기준 이상 유휴 세그먼트(휴게 제외·이미 필터됨)의 평균 길이. = "유휴 발생 시 평균 얼마나 쉬나"
   function avgIdleGap() {
-    let span = 0, gaps = 0;
-    state.agg.forEach((a) => {
-      if (a.doneCount >= 2 && a.firstDone != null && a.lastDone != null) {
-        span += (a.lastDone - a.firstDone) - breakOverlapMs(a.firstDone, a.lastDone);
-        gaps += (a.doneCount - 1);
-      }
-    });
-    return gaps ? span / gaps : 0;
+    let total = 0, n = 0;
+    state.agg.forEach((a) => (a.idleGaps || []).forEach((g) => { total += (g.e - g.s); n++; }));
+    return n ? total / n : 0;
   }
 
   function computeScores() {
@@ -922,7 +954,7 @@
     // 섹션 3: 유휴 타임라인(간트) — 단독, 전체 폭
     const sec3 = el('div', c('card'));
     sec3.style.marginTop = '16px';
-    sec3.append(headline('유휴 타임라인 — 작업 구간 · 유휴 구간(완료 사이)', c('dot-r')));
+    sec3.append(headline('유휴 타임라인 — 작업 구간 · 유휴 구간(기준 시간 이상)', c('dot-r')));
     const canBox = el('div', c('can-wrap') + ' ' + c('idlecan'));
     const cvi = el('canvas'); cvi.id = 'pp-chart-idle';
     canBox.append(cvi);
