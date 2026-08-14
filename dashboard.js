@@ -43,6 +43,7 @@
 
   // 상세 페이지 첫 table 의 데이터 셀 인덱스 (사용자 명세)
   const IDX_TOTE = 0;
+  const IDX_DONE = 5;    // 6번째 td = 집품완료시간
   const IDX_PICKER = 6;
   const IDX_QTY = 7;
 
@@ -93,6 +94,26 @@
   };
   const esc = (s) => String(s).replace(/[&<>"]/g, (ch) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  // ms → "1시간 05분" / "12분 30초" / "45초" / "—"
+  const fmtDuration = (ms) => {
+    if (!ms || ms <= 0) return '—';
+    const s = Math.round(ms / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (h) return `${h}시간 ${String(m).padStart(2, '0')}분`;
+    if (m) return `${m}분 ${String(sec).padStart(2, '0')}초`;
+    return `${sec}초`;
+  };
+  // 간단 토스트(모달 위 하단 중앙, ~2s 후 사라짐)
+  function showToast(msg) {
+    if (!overlay) return;
+    const t = el('div', c('toast'), esc(msg));
+    overlay.appendChild(t);
+    requestAnimationFrame(() => t.classList.add(c('toast-on')));
+    setTimeout(() => {
+      t.classList.remove(c('toast-on'));
+      setTimeout(() => t.remove(), 250);
+    }, 2000);
+  }
 
   function loadMap() {
     try { return JSON.parse(localStorage.getItem(LS_MAP)) || {}; }
@@ -152,7 +173,7 @@
     .${c('h')}{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:14.5px;font-weight:700;
       letter-spacing:-.2px;color:#18181b;}
     .${c('dot')}{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:${COLOR_ACCENT};}
-    .${c('dot-a')}{background:${COLOR_TOTE};} .${c('dot-v')}{background:#8b5cf6;}
+    .${c('dot-a')}{background:${COLOR_TOTE};} .${c('dot-v')}{background:#8b5cf6;} .${c('dot-r')}{background:#ef4444;}
     .${c('muted')}{color:#71717a;font-size:12px;line-height:1.6;}
 
     .${c('row')}{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;}
@@ -180,7 +201,7 @@
     .${c('tile')}{background:#fafafb;border:1px solid #ececef;border-radius:14px;padding:14px 16px;}
     .${c('tile')} .${c('tval')}{font-size:26px;font-weight:800;letter-spacing:-.6px;color:#18181b;}
     .${c('tile')} .${c('tlbl')}{font-size:12px;color:#71717a;margin-top:3px;font-weight:600;}
-    .${c('cards')}{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px;}
+    .${c('cards')}{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:16px;}
 
     /* 수치 순위 리스트 (leaderboard) */
     .${c('lb')}{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;}
@@ -245,7 +266,12 @@
     .${c('sw')} span::before{content:'';position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;
       background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:.18s;}
     .${c('sw')} input:checked + span{background:${COLOR_ACCENT};}
-    .${c('sw')} input:checked + span::before{transform:translateX(18px);}`;
+    .${c('sw')} input:checked + span::before{transform:translateX(18px);}
+    /* 토스트 */
+    .${c('toast')}{position:fixed;left:50%;bottom:34px;transform:translate(-50%,16px);
+      background:#18181b;color:#fff;font-size:13px;font-weight:600;padding:11px 18px;border-radius:12px;
+      box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transition:opacity .2s,transform .2s;z-index:2147483001;pointer-events:none;}
+    .${c('toast-on')}{opacity:1;transform:translate(-50%,0);}`;
     const s = el('style');
     s.id = 'pp-style';
     s.textContent = css;
@@ -564,8 +590,15 @@
     const tote = txt(IDX_TOTE);
     const picker = txt(IDX_PICKER);
     const qty = parseInt((txt(IDX_QTY) || '').replace(/[^\d.-]/g, ''), 10) || 0;
+    // 집품완료시간 → 타임스탬프(ms) | null
+    let done = null;
+    const dm = (txt(IDX_DONE) || '').match(DT_RE);
+    if (dm) {
+      const d = new Date(+dm[1], +dm[2] - 1, +dm[3], +dm[4], +dm[5], +(dm[6] || 0));
+      if (!isNaN(d)) done = d.getTime();
+    }
     if (!picker && !tote) return null;
-    return { tote, picker, qty };
+    return { tote, picker, qty, done };
   }
 
   /* ============================ 집계 & 점수 ============================ */
@@ -575,18 +608,33 @@
       const key = r.picker || '(미상)';
       if (state.excluded.has(key)) return; // 이번 결과에서 삭제된 작업자는 집계에서 제외
       let g = byPicker.get(key);
-      if (!g) { g = { picker: key, qty: 0, totes: new Set() }; byPicker.set(key, g); }
+      if (!g) { g = { picker: key, qty: 0, totes: new Set(), dones: [] }; byPicker.set(key, g); }
       g.qty += r.qty;
       if (r.tote) g.totes.add(r.tote);
+      if (r.done != null) g.dones.push(r.done);
     });
-    state.agg = Array.from(byPicker.values()).map((g) => ({
-      picker: g.picker,
-      name: displayName(g.picker),
-      qty: g.qty,
-      totes: g.totes.size || 0,
-      eff: g.totes.size ? +(g.qty / g.totes.size).toFixed(1) : 0,
-    }));
+    state.agg = Array.from(byPicker.values()).map((g) => {
+      const idle = computeIdle(g.dones);
+      return {
+        picker: g.picker,
+        name: displayName(g.picker),
+        qty: g.qty,
+        totes: g.totes.size || 0,
+        eff: g.totes.size ? +(g.qty / g.totes.size).toFixed(1) : 0,
+        idleLast: idle.last, // 마지막 − 직전 완료 간격(ms)
+        idleMax: idle.max,   // 기간 내 연속 완료 최대 간격(ms)
+      };
+    });
     computeScores();
+  }
+
+  // 완료 타임스탬프 배열 → 유휴 지표(ms). last=마지막−직전, max=연속 최대 간격.
+  function computeIdle(dones) {
+    if (!dones || dones.length < 2) return { last: 0, max: 0 };
+    const s = dones.slice().sort((a, b) => a - b);
+    let max = 0;
+    for (let i = 1; i < s.length; i++) max = Math.max(max, s[i] - s[i - 1]);
+    return { last: s[s.length - 1] - s[s.length - 2], max: max };
   }
 
   function computeScores() {
@@ -662,12 +710,13 @@
     wrap1.append(cv1); sec1.append(wrap1);
     bodyEl.append(sec1);
 
-    // 섹션 2: 수치 순위 리더보드 3개
+    // 섹션 2: 수치 순위 리더보드
     const cards = el('div', c('cards'));
     cards.append(
       lbCard('집품 수량 순위', c('dot'), 'pp-lb-qty'),
       lbCard('토트 수 순위', c('dot-a'), 'pp-lb-tote'),
       lbCard('종합 순위', c('dot-v'), 'pp-lb-score'),
+      lbCard('유휴시간 순위', c('dot-r'), 'pp-lb-idle'),
     );
     bodyEl.append(cards);
 
@@ -701,6 +750,7 @@
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderScoreBoard();
+    renderIdleBoard();
     drawMainChart();
     setUpdating(false);   // 마지막 업데이트 시각 표시
     startRefresh();       // 자동 새로고침 재개(설정이 on 이면)
@@ -757,6 +807,7 @@
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderScoreBoard();
+    renderIdleBoard();
     drawMainChart();
     setUpdating(false);
   }
@@ -772,23 +823,24 @@
 
   const MEDALS = ['🥇', '🥈', '🥉'];
 
-  function renderLeaderboard(olId, valFn, unit, subFn) {
+  function renderLeaderboard(olId, valFn, unit, subFn, opts) {
     const ol = $('#' + olId, bodyEl);
     if (!ol) return;
+    const useMedal = !opts || opts.medal !== false;
+    const fmt = (opts && opts.fmt) || ((v) => v.toLocaleString() + `<small>${unit}</small>`);
     const arr = [...state.agg].sort((a, b) => valFn(b) - valFn(a));
-    const max = arr.length ? (valFn(arr[0]) || 1) : 1;
+    const max = arr.length ? (Math.max(...arr.map(valFn)) || 1) : 1;
     ol.innerHTML = '';
     arr.forEach((a, i) => {
       const li = el('li');
-      if (i < 3) li.classList.add(c('t' + (i + 1)));
+      if (useMedal && i < 3) li.classList.add(c('t' + (i + 1)));
       li.style.setProperty('--p', Math.max(6, valFn(a) / max * 100) + '%');
-      const rk = i < 3 ? MEDALS[i] : (i + 1);
-      const val = valFn(a);
+      const rk = (useMedal && i < 3) ? MEDALS[i] : (i + 1);
       li.innerHTML =
         `<span class="${c('rk')}">${rk}</span>` +
         `<span><span class="${c('nm')}">${esc(a.name)}</span>` +
         (subFn ? `<div class="${c('sub')}">${subFn(a)}</div>` : '') + `</span>` +
-        `<span class="${c('vl')}">${val.toLocaleString()}<small>${unit}</small></span>` +
+        `<span class="${c('vl')}">${fmt(valFn(a))}</span>` +
         `<button class="${c('del')}" type="button" title="이 작업자를 이번 결과에서 삭제">✕</button>`;
       li.querySelector('.' + c('del')).addEventListener('click', () => removeWorker(a.picker));
       ol.append(li);
@@ -798,6 +850,13 @@
   function renderScoreBoard() {
     renderLeaderboard('pp-lb-score', (a) => a.score, '점',
       (a) => `수량 ${a.qty.toLocaleString()} · 토트 ${a.totes} · 효율 ${a.eff}`);
+  }
+
+  // 유휴시간 순위: 마지막−직전 완료 간격 내림차순. 유휴는 보상이 아니므로 메달 대신 순위 숫자.
+  function renderIdleBoard() {
+    renderLeaderboard('pp-lb-idle', (a) => a.idleLast, '',
+      (a) => `최대 유휴 ${fmtDuration(a.idleMax)}`,
+      { fmt: (v) => fmtDuration(v), medal: false });
   }
 
   // 작업자를 이번 결과에서 삭제 → 재집계 후 결과 화면 전체 재렌더(차트·순위·요약 타일 반영)
@@ -925,10 +984,13 @@
     }
     function applyPaste() {
       const pasted = parsePasted(ta.value);
-      if (!Object.keys(pasted).length) { alert('붙여넣은 데이터에서 코드·이름 2열을 찾지 못했습니다.'); return; }
+      const n = Object.keys(pasted).length;
+      if (!n) { showToast('코드·이름 2열을 찾지 못했습니다'); return; }
       Object.keys(pasted).forEach((k) => codes.add(k));
       // 기존 표 입력값 + 붙여넣기 병합(붙여넣기 우선)
       fillTable(Object.assign({}, collectTable(), pasted));
+      ta.value = '';                      // 입력창 초기화
+      showToast(`${n}명 반영됨`);           // 피드백 토스트
     }
     applyBtn.addEventListener('click', applyPaste);
     ta.addEventListener('paste', () => setTimeout(applyPaste, 0)); // 붙여넣는 즉시 반영
@@ -947,6 +1009,7 @@
       state.map = collectTable();
       saveMap(state.map);
       if (state.agg.length) aggregate();
+      showToast('매핑 저장됨');
       back();
     });
 
