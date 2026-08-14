@@ -141,6 +141,9 @@
     localStorage.setItem(LS_REFRESH, JSON.stringify({ on: state.refresh.on, intervalMs: state.refresh.intervalMs }));
   }
   const displayName = (picker) => state.map[picker] || picker;
+  // 매핑된 작업자는 코드도 함께 노출 (미매핑이면 코드만)
+  const codeOf = (a) => (a.name && a.name !== a.picker) ? a.picker : '';
+  const labelOf = (a) => codeOf(a) ? `${a.name} (${a.picker})` : a.picker;
 
   /* ============================ 스타일 주입 (다크 프로) ============================ */
   function injectStyle() {
@@ -214,6 +217,7 @@
     .${c('rk')}{width:26px;height:26px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
       font-size:13px;font-weight:800;border-radius:8px;background:#f0f0f2;color:#71717a;}
     .${c('nm')}{font-size:14px;font-weight:700;color:#18181b;}
+    .${c('code')}{font-size:11px;font-weight:600;color:#71717a;margin-left:6px;}
     .${c('sub')}{font-size:11px;color:#71717a;font-weight:600;margin-top:2px;}
     .${c('vl')}{margin-left:auto;font-size:16px;font-weight:800;color:#18181b;letter-spacing:-.3px;white-space:nowrap;}
     .${c('vl')} small{font-size:11px;font-weight:600;color:#71717a;margin-left:3px;}
@@ -869,6 +873,7 @@
       li.innerHTML =
         `<span class="${c('rk')}">${rk}</span>` +
         `<span><span class="${c('nm')}">${esc(a.name)}</span>` +
+        (codeOf(a) ? `<span class="${c('code')}">${esc(a.picker)}</span>` : '') +
         (subFn ? `<div class="${c('sub')}">${subFn(a)}</div>` : '') + `</span>` +
         `<span class="${c('vl')}">${fmt(valFn(a))}</span>` +
         (showDel ? `<button class="${c('del')}" type="button" title="이 작업자를 이번 결과에서 삭제">✕</button>` : '');
@@ -918,7 +923,7 @@
     state.charts.main = new Chart($('#pp-chart-main', bodyEl), {
       type: 'bar',
       data: {
-        labels: byQty.map((a) => a.name),
+        labels: byQty.map((a) => labelOf(a)),
         datasets: [
           { label: '수량', data: byQty.map((a) => a.qty), backgroundColor: COLOR_QTY, yAxisID: 'y', borderRadius: 7 },
           { label: '토트 수', data: byQty.map((a) => a.totes), backgroundColor: COLOR_TOTE, yAxisID: 'y1', borderRadius: 7 },
@@ -965,7 +970,7 @@
     canvas.style.display = '';
     box.style.height = Math.max(200, withTime.length * 46 + 44) + 'px';
 
-    const labels = withTime.map((a) => a.name);
+    const labels = withTime.map((a) => labelOf(a));
     const spanData = withTime.map((a) => [a.firstDone, a.lastDone]);           // 작업 구간
     const gapData = withTime.map((a) => (a.idleMax ? [a.idleMaxStart, a.idleMaxEnd] : null)); // 최대 유휴 구간
     const times = withTime.flatMap((a) => [a.firstDone, a.lastDone]);
