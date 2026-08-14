@@ -278,7 +278,23 @@
     .${c('toast')}{position:fixed;left:50%;bottom:34px;transform:translate(-50%,16px);
       background:#18181b;color:#fff;font-size:13px;font-weight:600;padding:11px 18px;border-radius:12px;
       box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transition:opacity .2s,transform .2s;z-index:2147483001;pointer-events:none;}
-    .${c('toast-on')}{opacity:1;transform:translate(-50%,0);}`;
+    .${c('toast-on')}{opacity:1;transform:translate(-50%,0);}
+    /* 로그인 풀림 배너 */
+    .${c('authbanner')}{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 18px;
+      background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.35);border-radius:14px;padding:12px 16px;}
+    .${c('authbanner')} .${c('ab-ico')}{width:26px;height:26px;flex:0 0 auto;border-radius:8px;display:flex;
+      align-items:center;justify-content:center;background:rgba(220,38,38,.15);color:#dc2626;font-size:15px;}
+    .${c('authbanner')} .${c('ab-msg')}{font-size:13px;font-weight:600;color:#b91c1c;line-height:1.45;flex:1 1 240px;}
+    .${c('authbanner')} .${c('btn-danger')}{margin-left:auto;border:none;color:#fff;
+      background:linear-gradient(135deg,#ef4444,#dc2626);box-shadow:0 6px 16px rgba(220,38,38,.32);}
+    /* 로그인 필요 메시지 카드(수동 조회) */
+    .${c('authcard')}{max-width:520px;margin:12vh auto 0;text-align:center;background:#fff;
+      border:1px solid #f1d4d4;border-radius:16px;padding:30px 28px;box-shadow:0 10px 30px rgba(220,38,38,.08);}
+    .${c('authcard')} .${c('ac-ico')}{width:52px;height:52px;margin:0 auto 16px;border-radius:14px;display:flex;
+      align-items:center;justify-content:center;background:rgba(220,38,38,.12);color:#dc2626;font-size:26px;}
+    .${c('authcard')} h3{margin:0 0 8px;font-size:19px;font-weight:800;color:#18181b;}
+    .${c('authcard')} p{margin:0 0 20px;font-size:14px;color:#71717a;line-height:1.55;}
+    .${c('authcard')} .${c('row')}{justify-content:center;}`;
     const s = el('style');
     s.id = 'pp-style';
     s.textContent = css;
@@ -443,6 +459,7 @@
     if (!f) return;
     if (state.refresh.busy) return; // 중복 실행 방지
     state.refresh.busy = true;
+    let authHandled = false;
 
     const { sd, st, ed, et } = f;
     const startDT = new Date(sd + 'T' + st + ':00');
@@ -507,6 +524,13 @@
         renderResults({ undated, total0 });
       }
     } catch (err) {
+      if (err && err.auth) {
+        // 로그인 풀림: 자동 새로고침 정지 + 안내(state.refresh.on 은 유지 → 재조회 성공 시 재개)
+        authHandled = true;
+        stopRefresh();
+        showAuthLost(silent);
+        return;
+      }
       if (status) {
         status.innerHTML = '오류: ' + (err && err.message ? err.message : err) +
           '<br><span class="' + c('muted') + '">쿠팡에 로그인된 상태에서 실행해야 합니다.</span>';
@@ -515,7 +539,7 @@
       }
     } finally {
       state.refresh.busy = false;
-      if (silent) setUpdating(false);
+      if (silent && !authHandled) setUpdating(false);
     }
   }
 
@@ -533,6 +557,45 @@
     wrap.append(st);
     bodyEl.append(wrap);
     $('.' + c('progress') + ' div', bodyEl).id = 'pp-progress-bar';
+  }
+
+  // 로그인 풀림 안내. 자동(silent)=결과 유지 + 상단 붉은 배너, 수동=메시지 카드. [다시 시도]=재조회.
+  function showAuthLost(silent) {
+    setUpdating(false, '자동 새로고침 중지 · 로그인 풀림');
+    setChip('로그인 필요');
+    if (silent && state.view === 'results' && bodyEl) {
+      // 기존 결과(과거값)는 그대로 두고 상단에 배너만 삽입(중복 방지)
+      const old = $('#pp-authbanner', bodyEl);
+      if (old) old.remove();
+      const banner = el('div', c('authbanner'));
+      banner.id = 'pp-authbanner';
+      banner.append(el('div', c('ab-ico'), '!'));
+      banner.append(el('div', c('ab-msg'),
+        '로그인이 풀려 자동 새로고침을 멈췄습니다. 쿠팡에 다시 로그인한 뒤 다시 시도하세요.<br>' +
+        '<span class="' + c('muted') + '" style="font-weight:500;font-size:12px;">아래 표시된 값은 로그인이 풀리기 전 기준입니다.</span>'));
+      const retry = el('button', c('btn') + ' ' + c('btn-danger'), '다시 시도');
+      retry.addEventListener('click', () => runQuery({ silent: false }));
+      banner.append(retry);
+      bodyEl.insertBefore(banner, bodyEl.firstChild);
+      return;
+    }
+    // 수동 조회(진행 화면) → 메시지 카드
+    if (!bodyEl) return;
+    state.view = 'auth';
+    bodyEl.innerHTML = '';
+    const card = el('div', c('authcard'));
+    card.append(el('div', c('ac-ico'), '🔒'));
+    card.append(el('h3', null, '로그인이 필요합니다'));
+    card.append(el('p', null,
+      '쿠팡 세션이 만료된 것으로 보입니다.<br>inbound.coupang.com 에 다시 로그인한 뒤 다시 시도하세요.'));
+    const row = el('div', c('row'));
+    const retry = el('button', c('btn') + ' ' + c('btn-danger'), '다시 시도');
+    retry.addEventListener('click', () => runQuery({ silent: false }));
+    const back = el('button', c('btn') + ' ' + c('btn-default'), '← 조회 조건');
+    back.addEventListener('click', renderConfig);
+    row.append(retry, back);
+    card.append(row);
+    bodyEl.append(card);
   }
 
   /* ============================ 실시간 자동 새로고침 ============================ */
@@ -1180,10 +1243,17 @@
   }
 
   /* ============================ 네트워크 유틸 ============================ */
+  function authErr(msg) { const e = new Error(msg); e.auth = true; return e; }
   async function fetchText(url) {
     const res = await fetch(url, { credentials: 'include' });
+    // 인증 실패 감지: 401/403, 같은 출처 로그인 리다이렉트
+    if (res.status === 401 || res.status === 403) throw authErr('로그인 필요(HTTP ' + res.status + ')');
+    if (res.redirected && /login|signin|sign-in|auth|member/i.test(res.url)) throw authErr('로그인 페이지로 이동됨');
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.text();
+    const text = await res.text();
+    // 로그인 페이지 마커(비밀번호 입력창)
+    if (/<input[^>]*type\s*=\s*["']?password/i.test(text)) throw authErr('로그인 페이지 감지됨');
+    return text;
   }
 
   // 동시성 제한 풀
@@ -1212,6 +1282,7 @@
     // 테스트 편의를 위해 내부 함수 노출
     _parseList: parseList,
     _parseDetail: parseDetail,
+    _runQuery: runQuery,
     _state: state,
   };
   window.__PP_DASHBOARD__ = api;
