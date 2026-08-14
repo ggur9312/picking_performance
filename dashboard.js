@@ -701,6 +701,7 @@
         idleMaxStart: idle.maxStart, // 최대 간격 시작 완료 시각
         idleMaxEnd: idle.maxEnd,     // 최대 간격 끝 완료 시각
         idleOngoing: idle.ongoing,   // 현재 진행 중 유휴(지금−마지막 완료, 실시간). 유휴시간 카드 표시용
+        idleGaps: idle.gaps,         // 연속 완료 사이 모든 유휴 간격 [{s,e}] (간트 표시용)
         idleLastStart: idle.lastStart, // 유휴시간(마지막−직전) 시작 완료 시각
         idleLastEnd: idle.lastEnd,     // 유휴시간(마지막−직전) 끝 완료 시각
         doneCount: g.dones.length,     // 완료 건수(평균 유휴 계산용)
@@ -715,14 +716,16 @@
   // liveNow(ms|null): 조회 범위가 현재를 포함할 때의 '지금' 시각. 주면 진행 중 유휴(지금−마지막 완료)를
   // ongoing 으로 별도 반환한다(유휴시간 카드의 '진행 중' 표시용). 최대 유휴(max)에는 포함하지 않는다.
   function computeIdle(dones, liveNow) {
-    const base = { last: 0, max: 0, maxStart: null, maxEnd: null, lastStart: null, lastEnd: null, first: null, lastDone: null, ongoing: 0 };
+    const base = { last: 0, max: 0, maxStart: null, maxEnd: null, lastStart: null, lastEnd: null, first: null, lastDone: null, ongoing: 0, gaps: [] };
     if (!dones || !dones.length) return base;
     const s = dones.slice().sort((a, b) => a - b);
     const first = s[0], lastDone = s[s.length - 1];
     let max = 0, ms = null, me = null, last = 0, lastStart = null, lastEnd = null;
+    const gaps = []; // 연속 완료 사이 모든 유휴 간격(간트에 전부 기록)
     if (s.length >= 2) {
       for (let i = 1; i < s.length; i++) {
         const g = s[i] - s[i - 1];
+        gaps.push({ s: s[i - 1], e: s[i] });
         if (g > max) { max = g; ms = s[i - 1]; me = s[i]; }
       }
       last = lastDone - s[s.length - 2];
@@ -730,7 +733,7 @@
     }
     // 진행 중 유휴(지금 − 마지막 완료) — 최대 유휴와 무관한 별도 값(유휴시간 카드 표시용, 실시간 증가)
     const ongoing = (liveNow != null && lastDone != null && liveNow > lastDone) ? (liveNow - lastDone) : 0;
-    return { last, max, maxStart: ms, maxEnd: me, lastStart, lastEnd, first, lastDone, ongoing };
+    return { last, max, maxStart: ms, maxEnd: me, lastStart, lastEnd, first, lastDone, ongoing, gaps };
   }
 
   // 평균 유휴 시간(ms): 전체 완료 간격 평균 = Σ(마지막−첫 완료) ÷ Σ(완료건수−1)
@@ -831,7 +834,7 @@
     // 섹션 3: 유휴 타임라인(간트) — 단독, 전체 폭
     const sec3 = el('div', c('card'));
     sec3.style.marginTop = '16px';
-    sec3.append(headline('유휴 타임라인 — 작업 구간 · 최대 유휴 시간대', c('dot-r')));
+    sec3.append(headline('유휴 타임라인 — 작업 구간 · 유휴 구간(완료 사이)', c('dot-r')));
     const canBox = el('div', c('can-wrap') + ' ' + c('idlecan'));
     const cvi = el('canvas'); cvi.id = 'pp-chart-idle';
     canBox.append(cvi);
@@ -1081,10 +1084,21 @@
 
     const labels = withTime.map((a) => labelOf(a));
     const spanData = withTime.map((a) => [a.firstDone, a.lastDone]);           // 작업 구간
-    const gapData = withTime.map((a) => (a.idleMax ? [a.idleMaxStart, a.idleMaxEnd] : null)); // 최대 유휴 구간
     const times = withTime.flatMap((a) => [a.firstDone, a.lastDone]);
     const minT = Math.min(...times), maxT = Math.max(...times);
     const pad = Math.max(60000, (maxT - minT) * 0.04); // 최소 1분 패딩
+
+    // 완료 사이 모든 유휴 간격을 빨강 세그먼트로 — gap 인덱스별 데이터셋(작업자마다 개수가 달라 null 로 채움)
+    const maxGaps = Math.max(0, ...withTime.map((a) => a.idleGaps.length));
+    const gapSets = [];
+    for (let d = 0; d < maxGaps; d++) {
+      gapSets.push({
+        label: d === 0 ? '유휴 구간' : '', // 범례는 첫 세그먼트만
+        data: withTime.map((a) => (a.idleGaps[d] ? [a.idleGaps[d].s, a.idleGaps[d].e] : null)),
+        backgroundColor: 'rgba(239,68,68,.85)', borderRadius: 5,
+        grouped: false, order: 1, barPercentage: 0.55, categoryPercentage: 0.8,
+      });
+    }
 
     state.charts.idle = new Chart(canvas, {
       type: 'bar',
@@ -1093,23 +1107,24 @@
         datasets: [
           { label: '작업 구간', data: spanData, backgroundColor: '#e4e4e7', borderRadius: 5,
             grouped: false, order: 2, barPercentage: 0.55, categoryPercentage: 0.8 },
-          { label: '최대 유휴', data: gapData, backgroundColor: 'rgba(239,68,68,.85)', borderRadius: 5,
-            grouped: false, order: 1, barPercentage: 0.55, categoryPercentage: 0.8 },
+          ...gapSets,
         ],
       },
       options: {
         indexAxis: 'y', responsive: true, maintainAspectRatio: false,
         devicePixelRatio: Math.min(3, Math.max(2, window.devicePixelRatio || 1)),
         plugins: {
-          legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, color: '#27272a', font: { weight: '700', size: 12 } } },
+          legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, color: '#27272a', font: { weight: '700', size: 12 }, filter: (item) => !!item.text } },
           tooltip: {
             callbacks: {
               label: (ctx) => {
-                const a = withTime[ctx.dataIndex];
-                if (ctx.datasetIndex === 1) {
-                  return a.idleMax ? `최대 유휴 ${fmtDuration(a.idleMax)} (${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)})` : '최대 유휴 없음';
+                if (ctx.datasetIndex === 0) {
+                  const a = withTime[ctx.dataIndex];
+                  return `작업 ${hhmm(a.firstDone)}→${hhmm(a.lastDone)}`;
                 }
-                return `작업 ${hhmm(a.firstDone)}→${hhmm(a.lastDone)}`;
+                const seg = ctx.raw; // [s, e]
+                if (!seg) return null;
+                return `유휴 ${fmtDuration(seg[1] - seg[0])} (${hhmm(seg[0])}→${hhmm(seg[1])})`;
               },
             },
           },
