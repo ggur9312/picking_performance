@@ -575,7 +575,9 @@
             const html = await fetchText(url);
             const doc = new DOMParser().parseFromString(html, 'text/html');
             rec = parseDetail(doc);
-            if (rec) state.detailCache.set(key, rec);
+            // 완료된 상세(done!=null)만 캐시. 진행 중(집품완료시간 '-' → done=null)은 캐시하지 않아
+            // 다음 새로고침에 다시 받아 완료 시각을 반영한다(진행 중 토트가 계속 유휴로 남는 버그 방지).
+            if (rec && rec.done != null) state.detailCache.set(key, rec);
           } catch (e) { /* 개별 실패는 건너뜀 */ }
         }
         if (rec) rows.push(rec);
