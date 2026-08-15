@@ -861,13 +861,6 @@
     return { last, max, maxStart: ms, maxEnd: me, lastStart, lastEnd, first, lastDone, ongoing, gaps };
   }
 
-  // 평균 유휴 시간(ms): 기준 이상 유휴 세그먼트(휴게 제외·이미 필터됨)의 평균 길이. = "유휴 발생 시 평균 얼마나 쉬나"
-  function avgIdleGap() {
-    let total = 0, n = 0;
-    state.agg.forEach((a) => (a.idleGaps || []).forEach((g) => { total += (g.e - g.s); n++; }));
-    return n ? total / n : 0;
-  }
-
   function computeScores() {
     const maxQ = Math.max(1, ...state.agg.map((a) => a.qty));
     const minQ = Math.min(...state.agg.map((a) => a.qty), 0);
@@ -923,7 +916,6 @@
       tile(totT.toLocaleString(), '총 토트 수', 'pp-t-tote'),
       tile(String(state.agg.length), '작업자 수', 'pp-t-workers'),
       tile(totT ? (totQ / totT).toFixed(1) : '0', '토트당 평균 수량', 'pp-t-avg'),
-      tile(fmtDuration(avgIdleGap()), '평균 유휴 시간', 'pp-t-idleavg'),
     );
     bodyEl.append(tiles);
 
@@ -961,14 +953,6 @@
     sec3.append(canBox);
     bodyEl.append(sec3);
 
-    // 섹션 4: 유휴 순위 2열 (좌: 유휴시간 / 우: 최대유휴시간)
-    const idleRank = el('div', c('idlerank'));
-    idleRank.append(
-      lbCard('유휴시간 순위', c('dot-r'), 'pp-lb-idle-last'),
-      lbCard('최대 유휴시간 순위', c('dot-v'), 'pp-lb-idle-max'),
-    );
-    bodyEl.append(idleRank);
-
     // 종합 순위 가중치 재조정 슬라이더
     const wRow = el('div', c('sliders'));
     const wq = Math.round(state.weights.qty * 100);
@@ -999,8 +983,6 @@
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderScoreBoard();
-    renderIdleLastBoard();
-    renderIdleMaxBoard();
     drawMainChart();
     drawIdleTimeline();
     setUpdating(false);   // 마지막 업데이트 시각 표시
@@ -1055,12 +1037,9 @@
     set('pp-t-tote', totT.toLocaleString());
     set('pp-t-workers', String(state.agg.length));
     set('pp-t-avg', totT ? (totQ / totT).toFixed(1) : '0');
-    set('pp-t-idleavg', fmtDuration(avgIdleGap()));
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderScoreBoard();
-    renderIdleLastBoard();
-    renderIdleMaxBoard();
     drawMainChart();
     drawIdleTimeline();
     setUpdating(false);
@@ -1108,26 +1087,6 @@
     renderLeaderboard('pp-lb-score', (a) => a.score, '점',
       (a) => `수량 ${a.qty.toLocaleString()} · 토트 ${a.totes} · 효율 ${a.eff}`,
       { del: true });
-  }
-
-  // 유휴시간 순위: 마지막−직전 완료 간격 내림차순. 유휴는 보상이 아니므로 메달 대신 순위 숫자.
-  // 최대 유휴는 발생 시간대(HH:MM→HH:MM)도 함께 표시.
-  // 유휴시간 순위: 마지막−직전 완료 간격 기준(값·정렬 유지). 현재 진행 중 유휴는 '진행 중 X'로 별도 표기(실시간).
-  function renderIdleLastBoard() {
-    renderLeaderboard('pp-lb-idle-last', (a) => a.idleLast, '',
-      (a) => {
-        const parts = [];
-        if (a.idleLast) parts.push(`${hhmm(a.idleLastStart)}→${hhmm(a.idleLastEnd)}`);
-        if (a.idleOngoing) parts.push(`<span class="${c('live')}">● 진행 중 ${fmtDuration(a.idleOngoing)}</span>`);
-        return parts.length ? parts.join(' · ') : '—';
-      },
-      { fmt: (v) => fmtDuration(v), medal: false });
-  }
-  // 최대유휴시간 순위: 기간 내 연속 완료 최대 간격 + 발생 시간대만 표시.
-  function renderIdleMaxBoard() {
-    renderLeaderboard('pp-lb-idle-max', (a) => a.idleMax, '',
-      (a) => a.idleMax ? `${hhmm(a.idleMaxStart)}→${hhmm(a.idleMaxEnd)}` : '—',
-      { fmt: (v) => fmtDuration(v), medal: false });
   }
 
   // 작업자를 이번 결과에서 삭제 → 재집계 후 결과 화면 전체 재렌더(차트·순위·요약 타일 반영)
