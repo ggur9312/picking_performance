@@ -918,6 +918,7 @@
       tile(totT.toLocaleString(), '총 토트 수', 'pp-t-tote'),
       tile(String(state.agg.length), '작업자 수', 'pp-t-workers'),
       tile(totT ? (totQ / totT).toFixed(1) : '0', '토트당 평균 수량', 'pp-t-avg'),
+      tile(picksPerHour(totQ).toFixed(1), '시간당 집품 수량', 'pp-t-pph'),
     );
     bodyEl.append(tiles);
 
@@ -991,6 +992,15 @@
     startRefresh();       // 자동 새로고침 재개(설정이 on 이면)
   }
 
+  // 전체 작업 구간(첫 완료 ~ 마지막 완료) 기준 시간당 집품 수량
+  function picksPerHour(totQ) {
+    const firsts = state.agg.map((a) => a.firstDone).filter((x) => x != null);
+    const lasts = state.agg.map((a) => a.lastDone).filter((x) => x != null);
+    if (!firsts.length || !lasts.length) return 0;
+    const spanMs = Math.max(...lasts) - Math.min(...firsts);
+    return spanMs > 0 ? totQ / (spanMs / 3600000) : 0;
+  }
+
   function tile(val, lbl, valId) {
     const t = el('div', c('tile'));
     const v = el('div', c('tval'), val);
@@ -1039,6 +1049,7 @@
     set('pp-t-tote', totT.toLocaleString());
     set('pp-t-workers', String(state.agg.length));
     set('pp-t-avg', totT ? (totQ / totT).toFixed(1) : '0');
+    set('pp-t-pph', picksPerHour(totQ).toFixed(1));
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderScoreBoard();
