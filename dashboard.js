@@ -992,13 +992,15 @@
     startRefresh();       // 자동 새로고침 재개(설정이 on 이면)
   }
 
-  // 전체 작업 구간(첫 완료 ~ 마지막 완료) 기준 시간당 집품 수량
+  // 전체 작업 구간(첫 완료 ~ 마지막 완료)에서 휴게시간을 뺀 기준 시간당 집품 수량
   function picksPerHour(totQ) {
     const firsts = state.agg.map((a) => a.firstDone).filter((x) => x != null);
     const lasts = state.agg.map((a) => a.lastDone).filter((x) => x != null);
     if (!firsts.length || !lasts.length) return 0;
-    const spanMs = Math.max(...lasts) - Math.min(...firsts);
-    return spanMs > 0 ? totQ / (spanMs / 3600000) : 0;
+    const s = Math.min(...firsts), e = Math.max(...lasts);
+    // 휴게시간 제외: subtractBreaks 로 남은 구간 합산 (휴게 off 시 전체 구간)
+    const workMs = subtractBreaks(s, e).reduce((sum, [a, b]) => sum + (b - a), 0);
+    return workMs > 0 ? totQ / (workMs / 3600000) : 0;
   }
 
   function tile(val, lbl, valId) {
