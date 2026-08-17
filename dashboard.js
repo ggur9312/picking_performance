@@ -757,6 +757,14 @@
   }
 
   /* ============================ 집계 & 점수 ============================ */
+  // 조회 기간(근무시간) − 휴게 (ms). 시간당 집품 개수의 분모(모든 작업자 공통).
+  function queryShiftMs() {
+    if (!state.form) return 0;
+    const s = new Date(state.form.sd + 'T' + state.form.st + ':00').getTime();
+    const e = new Date(state.form.ed + 'T' + state.form.et + ':59').getTime();
+    return e > s ? Math.max(0, (e - s) - breakOverlapMs(s, e)) : 0;
+  }
+
   function aggregate() {
     const byPicker = new Map();
     state.rows.forEach((r) => {
@@ -772,20 +780,20 @@
     const endMs = state.form ? new Date(state.form.ed + 'T' + state.form.et + ':59').getTime() : null;
     const now = Date.now();
     const liveNow = (endMs != null && endMs >= now) ? now : null;
+    // 시간당 집품 개수 분모: 조회 기간(근무시간) − 휴게. 모든 작업자 공통.
+    const shiftMs = queryShiftMs();
     state.agg = Array.from(byPicker.values()).map((g) => {
       const idle = computeIdle(g.dones, liveNow);
-      // 시간당 집품 개수: 수량 ÷ (첫~마지막 완료 − 휴게) 시간. (전체 경과시간 기준, 유휴 포함·휴게 제외)
-      const workMs = (idle.first != null && idle.lastDone != null && g.dones.length >= 2)
-        ? Math.max(0, (idle.lastDone - idle.first) - breakOverlapMs(idle.first, idle.lastDone)) : 0;
-      const perHour = workMs > 0 ? g.qty / (workMs / 3600000) : 0;
+      // 시간당 집품 개수: 수량 ÷ 근무시간(조회 기간 − 휴게)
+      const perHour = shiftMs > 0 ? g.qty / (shiftMs / 3600000) : 0;
       return {
         picker: g.picker,
         name: displayName(g.picker),
         qty: g.qty,
         totes: g.totes.size || 0,
         eff: g.totes.size ? +(g.qty / g.totes.size).toFixed(1) : 0,
-        perHour,  // 시간당 집품 개수(개/시간)
-        workMs,   // 경과 작업시간(ms, 휴게 제외)
+        perHour,  // 시간당 집품 개수(개/시간, 근무시간 기준)
+        shiftMs,  // 근무시간(ms, 조회 기간 − 휴게, 공통)
         idleLast: idle.last, // 마지막 − 직전 완료 간격(ms)
         idleMax: idle.max,   // 기간 내 연속 완료 최대 간격(ms)
         idleMaxStart: idle.maxStart, // 최대 간격 시작 완료 시각
@@ -939,7 +947,7 @@
       tile(totT.toLocaleString(), '총 토트 수', 'pp-t-tote'),
       tile(String(state.agg.length), '작업자 수', 'pp-t-workers'),
       tile(totT ? (totQ / totT).toFixed(1) : '0', '토트당 평균 수량', 'pp-t-avg'),
-      tile(picksPerHour(totQ).toFixed(1), '시간당 집품 수량', 'pp-t-pph'),
+      tile(picksPerHour().toFixed(1), '시간당 집품 수량', 'pp-t-pph'),
     );
     bodyEl.append(tiles);
 
@@ -1004,15 +1012,11 @@
     startRefresh();       // 자동 새로고침 재개(설정이 on 이면)
   }
 
-  // 전체 작업 구간(첫 완료 ~ 마지막 완료)에서 휴게시간을 뺀 기준 시간당 집품 수량
-  function picksPerHour(totQ) {
-    const firsts = state.agg.map((a) => a.firstDone).filter((x) => x != null);
-    const lasts = state.agg.map((a) => a.lastDone).filter((x) => x != null);
-    if (!firsts.length || !lasts.length) return 0;
-    const s = Math.min(...firsts), e = Math.max(...lasts);
-    // 휴게시간 제외: subtractBreaks 로 남은 구간 합산 (휴게 off 시 전체 구간)
-    const workMs = subtractBreaks(s, e).reduce((sum, [a, b]) => sum + (b - a), 0);
-    return workMs > 0 ? totQ / (workMs / 3600000) : 0;
+  // 전체 시간당 집품 수량 = 총 수량 ÷ 근무시간(조회 기간 − 휴게)
+  function picksPerHour() {
+    const shiftMs = queryShiftMs();
+    const totQ = state.agg.reduce((s, a) => s + a.qty, 0);
+    return shiftMs > 0 ? totQ / (shiftMs / 3600000) : 0;
   }
 
   function tile(val, lbl, valId) {
@@ -1063,7 +1067,7 @@
     set('pp-t-tote', totT.toLocaleString());
     set('pp-t-workers', String(state.agg.length));
     set('pp-t-avg', totT ? (totQ / totT).toFixed(1) : '0');
-    set('pp-t-pph', picksPerHour(totQ).toFixed(1));
+    set('pp-t-pph', picksPerHour().toFixed(1));
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
     renderPerHourBoard();
@@ -1117,11 +1121,11 @@
       { del: true });
   }
 
-  // 시간당 집품 순위: 수량 ÷ (첫~마지막 완료 − 휴게). 높을수록 상위(메달).
+  // 시간당 집품 순위: 수량 ÷ 근무시간(조회 기간 − 휴게). 높을수록 상위(메달).
   function renderPerHourBoard() {
     renderLeaderboard('pp-lb-perhour', (a) => a.perHour, '',
-      (a) => a.perHour ? `수량 ${a.qty.toLocaleString()} · 경과 ${fmtDuration(a.workMs)}` : '—',
-      { fmt: (v) => v ? Math.round(v).toLocaleString() + '<small>개/시간</small>' : '—' });
+      (a) => a.perHour ? `수량 ${a.qty.toLocaleString()} · 근무 ${fmtDuration(a.shiftMs)}` : '—',
+      { fmt: (v) => v ? v.toFixed(1) + '<small>개/시간</small>' : '—' });
   }
 
   // 작업자를 이번 결과에서 삭제 → 재집계 후 결과 화면 전체 재렌더(차트·순위·요약 타일 반영)
