@@ -128,9 +128,9 @@
   function loadWeights() {
     try {
       const w = JSON.parse(localStorage.getItem(LS_WEIGHTS));
-      if (w && typeof w.qty === 'number' && typeof w.tote === 'number' && typeof w.rate === 'number') return w;
+      if (w && typeof w.qty === 'number') { const q = Math.min(1, Math.max(0, w.qty)); return { qty: q, tote: 1 - q }; }
     } catch (e) {}
-    return { qty: 0.4, tote: 0.3, rate: 0.3 }; // 수량·토트·시간당 집품
+    return { qty: 0.6, tote: 0.4 };
   }
   function saveWeights(w) { localStorage.setItem(LS_WEIGHTS, JSON.stringify(w)); }
   function loadRefresh() {
@@ -197,7 +197,7 @@
     .${c('h')}{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:14.5px;font-weight:700;
       letter-spacing:-.2px;color:#18181b;}
     .${c('dot')}{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:${COLOR_ACCENT};}
-    .${c('dot-a')}{background:${COLOR_TOTE};} .${c('dot-v')}{background:#8b5cf6;} .${c('dot-r')}{background:#ef4444;} .${c('dot-g')}{background:#10b981;}
+    .${c('dot-a')}{background:${COLOR_TOTE};} .${c('dot-v')}{background:#8b5cf6;} .${c('dot-r')}{background:#ef4444;}
     .${c('muted')}{color:#71717a;font-size:12px;line-height:1.6;}
 
     .${c('row')}{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;}
@@ -384,29 +384,6 @@
     overlay = winEl = bodyEl = null;
   }
 
-  // 종합 순위 가중치 슬라이더 3개(수량·토트·시간당). 독립 0~100 → 점수는 합으로 정규화.
-  function renderWeightSliders(container, prefix, onChange) {
-    const pct = (v) => Math.round((v || 0) * 100);
-    const w = state.weights;
-    const mk = (key, label, val) =>
-      `<label>${label} <b id="${prefix}-${key}-lbl">${val}%</b>` +
-      `<br><input type="range" id="${prefix}-${key}" min="0" max="100" value="${val}"></label>`;
-    container.innerHTML = mk('q', '수량', pct(w.qty)) + mk('t', '토트', pct(w.tote)) + mk('r', '시간당', pct(w.rate));
-    const upd = () => {
-      const vq = +$('#' + prefix + '-q', container).value;
-      const vt = +$('#' + prefix + '-t', container).value;
-      const vr = +$('#' + prefix + '-r', container).value;
-      const sum = (vq + vt + vr) || 1;
-      state.weights = { qty: vq / sum, tote: vt / sum, rate: vr / sum };
-      saveWeights(state.weights);
-      $('#' + prefix + '-q-lbl', container).textContent = Math.round(vq / sum * 100) + '%';
-      $('#' + prefix + '-t-lbl', container).textContent = Math.round(vt / sum * 100) + '%';
-      $('#' + prefix + '-r-lbl', container).textContent = Math.round(vr / sum * 100) + '%';
-      if (onChange) onChange();
-    };
-    ['q', 't', 'r'].forEach((k) => $('#' + prefix + '-' + k, container).addEventListener('input', upd));
-  }
-
   function headline(text, dotClass) {
     const h = el('div', c('h'));
     h.append(el('span', c('dot') + (dotClass ? ' ' + dotClass : '')), document.createTextNode(text));
@@ -447,11 +424,14 @@
     wCard.style.marginTop = '20px';
     wCard.append(headline('종합 순위 가중치'));
     wCard.append(el('div', c('muted'),
-      '수량 · 토트 수 · 시간당 집품 개수를 각각 0~100으로 정규화한 뒤 가중합으로 종합 점수를 냅니다. ' +
-      '(세 슬라이더는 상대 비율 — 합으로 자동 정규화) 토트 가중치를 높이면 할당이 넓게 퍼진 작업자가 덜 불이익을 받습니다.'));
+      '수량과 토트 수를 각각 0~100으로 정규화한 뒤 가중합으로 종합 점수를 냅니다. ' +
+      '토트 가중치를 높이면, 할당이 넓게 퍼져 토트는 많지만 수량이 적은 작업자가 덜 불이익을 받습니다.'));
     const sliders = el('div', c('sliders'));
+    const wq = Math.round(state.weights.qty * 100);
+    sliders.innerHTML =
+      `<label>수량 <b id="pp-wq-lbl">${wq}%</b> / 토트 <b id="pp-wt-lbl">${100 - wq}%</b>` +
+      `<br><input type="range" id="pp-wq" min="0" max="100" value="${wq}"></label>`;
     wCard.append(sliders);
-    renderWeightSliders(sliders, 'pp-w', null);
 
     // 휴게 시간 (유휴 계산 제외)
     const bCard = el('div', c('card'));
@@ -487,6 +467,14 @@
     iCard.append(irow);
 
     bodyEl.append(rowDates, rowBtns, wCard, bCard, iCard);
+
+    $('#pp-wq', bodyEl).addEventListener('input', (e) => {
+      const q = +e.target.value;
+      $('#pp-wq-lbl', bodyEl).textContent = q + '%';
+      $('#pp-wt-lbl', bodyEl).textContent = (100 - q) + '%';
+      state.weights = { qty: q / 100, tote: (100 - q) / 100 };
+      saveWeights(state.weights);
+    });
 
     const onBreakChange = () => {
       state.break.on = $('#pp-break-on', bodyEl).checked;
@@ -757,14 +745,6 @@
   }
 
   /* ============================ 집계 & 점수 ============================ */
-  // 조회 기간(근무시간) − 휴게 (ms). 시간당 집품 개수의 분모(모든 작업자 공통).
-  function queryShiftMs() {
-    if (!state.form) return 0;
-    const s = new Date(state.form.sd + 'T' + state.form.st + ':00').getTime();
-    const e = new Date(state.form.ed + 'T' + state.form.et + ':59').getTime();
-    return e > s ? Math.max(0, (e - s) - breakOverlapMs(s, e)) : 0;
-  }
-
   function aggregate() {
     const byPicker = new Map();
     state.rows.forEach((r) => {
@@ -780,20 +760,14 @@
     const endMs = state.form ? new Date(state.form.ed + 'T' + state.form.et + ':59').getTime() : null;
     const now = Date.now();
     const liveNow = (endMs != null && endMs >= now) ? now : null;
-    // 시간당 집품 개수 분모: 조회 기간(근무시간) − 휴게. 모든 작업자 공통.
-    const shiftMs = queryShiftMs();
     state.agg = Array.from(byPicker.values()).map((g) => {
       const idle = computeIdle(g.dones, liveNow);
-      // 시간당 집품 개수: 수량 ÷ 근무시간(조회 기간 − 휴게)
-      const perHour = shiftMs > 0 ? g.qty / (shiftMs / 3600000) : 0;
       return {
         picker: g.picker,
         name: displayName(g.picker),
         qty: g.qty,
         totes: g.totes.size || 0,
         eff: g.totes.size ? +(g.qty / g.totes.size).toFixed(1) : 0,
-        perHour,  // 시간당 집품 개수(개/시간, 근무시간 기준)
-        shiftMs,  // 근무시간(ms, 조회 기간 − 휴게, 공통)
         idleLast: idle.last, // 마지막 − 직전 완료 간격(ms)
         idleMax: idle.max,   // 기간 내 연속 완료 최대 간격(ms)
         idleMaxStart: idle.maxStart, // 최대 간격 시작 완료 시각
@@ -894,15 +868,12 @@
     const minQ = Math.min(...state.agg.map((a) => a.qty), 0);
     const maxT = Math.max(1, ...state.agg.map((a) => a.totes));
     const minT = Math.min(...state.agg.map((a) => a.totes), 0);
-    const maxR = Math.max(1, ...state.agg.map((a) => a.perHour));
-    const minR = Math.min(...state.agg.map((a) => a.perHour), 0);
     const norm = (v, mn, mx) => (mx === mn ? 100 : ((v - mn) / (mx - mn)) * 100);
     const w = state.weights;
     state.agg.forEach((a) => {
       a.qtyN = norm(a.qty, minQ, maxQ);
       a.toteN = norm(a.totes, minT, maxT);
-      a.rateN = norm(a.perHour, minR, maxR);
-      a.score = +(w.qty * a.qtyN + w.tote * a.toteN + (w.rate || 0) * a.rateN).toFixed(1);
+      a.score = +(w.qty * a.qtyN + w.tote * a.toteN).toFixed(1);
     });
   }
 
@@ -947,7 +918,6 @@
       tile(totT.toLocaleString(), '총 토트 수', 'pp-t-tote'),
       tile(String(state.agg.length), '작업자 수', 'pp-t-workers'),
       tile(totT ? (totQ / totT).toFixed(1) : '0', '토트당 평균 수량', 'pp-t-avg'),
-      tile(picksPerHour().toFixed(1), '시간당 집품 수량', 'pp-t-pph'),
     );
     bodyEl.append(tiles);
 
@@ -966,12 +936,11 @@
     wrap1.append(cv1); sec1.append(wrap1);
     bodyEl.append(sec1);
 
-    // 섹션 2: 수치 순위 리더보드 (수량 / 토트 / 시간당 집품 / 종합)
+    // 섹션 2: 수치 순위 리더보드 (수량 / 토트 / 종합)
     const cards = el('div', c('cards'));
     cards.append(
       lbCard('집품 수량 순위', c('dot'), 'pp-lb-qty'),
       lbCard('토트 수 순위', c('dot-a'), 'pp-lb-tote'),
-      lbCard('시간당 집품 순위', c('dot-g'), 'pp-lb-perhour'),
       lbCard('종합 순위', c('dot-v'), 'pp-lb-score'),
     );
     bodyEl.append(cards);
@@ -986,11 +955,22 @@
     sec3.append(canBox);
     bodyEl.append(sec3);
 
-    // 종합 순위 가중치 재조정 슬라이더 (수량·토트·시간당)
-    bodyEl.append(el('div', c('muted'), '종합 순위 가중치 (수량 · 토트 · 시간당 집품)'));
+    // 종합 순위 가중치 재조정 슬라이더
     const wRow = el('div', c('sliders'));
+    const rwq = Math.round(state.weights.qty * 100);
+    wRow.innerHTML =
+      `<label>종합 순위 가중치 · 수량 <b id="pp-r-wq-lbl">${rwq}%</b> / 토트 <b id="pp-r-wt-lbl">${100 - rwq}%</b>` +
+      `<br><input type="range" id="pp-r-wq" min="0" max="100" value="${rwq}"></label>`;
     bodyEl.append(wRow);
-    renderWeightSliders(wRow, 'pp-rw', () => { computeScores(); renderScoreBoard(); });
+    $('#pp-r-wq', bodyEl).addEventListener('input', (e) => {
+      const q = +e.target.value;
+      $('#pp-r-wq-lbl', bodyEl).textContent = q + '%';
+      $('#pp-r-wt-lbl', bodyEl).textContent = (100 - q) + '%';
+      state.weights = { qty: q / 100, tote: (100 - q) / 100 };
+      saveWeights(state.weights);
+      computeScores();
+      renderScoreBoard();
+    });
 
     // 하단 버튼
     const footer = el('div', c('footer'));
@@ -1004,19 +984,11 @@
     // 렌더
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
-    renderPerHourBoard();
     renderScoreBoard();
     drawMainChart();
     drawIdleTimeline();
     setUpdating(false);   // 마지막 업데이트 시각 표시
     startRefresh();       // 자동 새로고침 재개(설정이 on 이면)
-  }
-
-  // 전체 시간당 집품 수량 = 총 수량 ÷ 근무시간(조회 기간 − 휴게)
-  function picksPerHour() {
-    const shiftMs = queryShiftMs();
-    const totQ = state.agg.reduce((s, a) => s + a.qty, 0);
-    return shiftMs > 0 ? totQ / (shiftMs / 3600000) : 0;
   }
 
   function tile(val, lbl, valId) {
@@ -1067,10 +1039,8 @@
     set('pp-t-tote', totT.toLocaleString());
     set('pp-t-workers', String(state.agg.length));
     set('pp-t-avg', totT ? (totQ / totT).toFixed(1) : '0');
-    set('pp-t-pph', picksPerHour().toFixed(1));
     renderLeaderboard('pp-lb-qty', (a) => a.qty, '개');
     renderLeaderboard('pp-lb-tote', (a) => a.totes, '토트');
-    renderPerHourBoard();
     renderScoreBoard();
     drawMainChart();
     drawIdleTimeline();
@@ -1117,15 +1087,8 @@
   function renderScoreBoard() {
     // 삭제(✕) 버튼은 종합 순위에서만
     renderLeaderboard('pp-lb-score', (a) => a.score, '점',
-      (a) => `수량 ${a.qty.toLocaleString()} · 토트 ${a.totes} · 시간당 ${a.perHour ? Math.round(a.perHour).toLocaleString() : '—'} · 효율 ${a.eff}`,
+      (a) => `수량 ${a.qty.toLocaleString()} · 토트 ${a.totes} · 효율 ${a.eff}`,
       { del: true });
-  }
-
-  // 시간당 집품 순위: 수량 ÷ 근무시간(조회 기간 − 휴게). 높을수록 상위(메달).
-  function renderPerHourBoard() {
-    renderLeaderboard('pp-lb-perhour', (a) => a.perHour, '',
-      (a) => a.perHour ? `수량 ${a.qty.toLocaleString()} · 근무 ${fmtDuration(a.shiftMs)}` : '—',
-      { fmt: (v) => v ? v.toFixed(1) + '<small>개/시간</small>' : '—' });
   }
 
   // 작업자를 이번 결과에서 삭제 → 재집계 후 결과 화면 전체 재렌더(차트·순위·요약 타일 반영)
